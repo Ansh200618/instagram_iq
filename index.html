@@ -721,7 +721,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
       <div class="dev-note">
         <strong>✅ Live Graph API:</strong> Clicking "Continue with Instagram" pulls live profile data directly via the Meta Business API endpoint.
       </div>
-      <p class="modal-note" style="margin-top:10px">If prompted, enter igToken, igBusinessId, and ownerUsername once — they are saved in your browser only.</p>
+      <p class="modal-note" style="margin-top:10px">Set igToken, igBusinessId, and ownerUsername in browser localStorage key <code>gramiq-config</code> before connecting.</p>
       <p class="modal-note">Only public Instagram accounts or approved test users can be analyzed</p>
     </div>
     <div id="ms2" style="display:none;text-align:center;padding:20px 0">
@@ -777,10 +777,8 @@ function loadAppConfig(){
   try{fromStorage=JSON.parse(localStorage.getItem(APP_CONFIG_KEY)||'{}')||{}}catch(e){console.warn('Invalid saved config in localStorage for',APP_CONFIG_KEY,e)}
   const params=new URLSearchParams(location.search);
   const fromQuery={
-    igToken:params.get('igToken')||'',
     igBusinessId:params.get('igBusinessId')||'',
-    ownerUsername:params.get('ownerUsername')||'',
-    geminiKey:params.get('geminiKey')||''
+    ownerUsername:params.get('ownerUsername')||''
   };
   return {...fromStorage,...Object.fromEntries(Object.entries(fromQuery).filter(([,v])=>v))};
 }
@@ -809,16 +807,17 @@ function ensureApiConfig(promptIfMissing=false){
   if(!appConfig.igBusinessId)missing.push('igBusinessId');
   if(!appConfig.ownerUsername)missing.push('ownerUsername');
   if(!missing.length)return appConfig;
-  if(!promptIfMissing)throw new Error('Missing API config. Add igToken, igBusinessId, and ownerUsername via URL params or localStorage.');
-  const igToken=appConfig.igToken||prompt('Paste your Meta Page Access Token (igToken):','');
-  const igBusinessId=appConfig.igBusinessId||prompt('Paste your Instagram Business ID (igBusinessId):','');
-  const ownerUsername=appConfig.ownerUsername||prompt('Enter your Instagram username (ownerUsername, without @):','');
-  if(!igToken||!igBusinessId||!ownerUsername)throw new Error('Instagram API config is required to continue.');
-  const token=igToken.trim();
-  const businessId=igBusinessId.trim();
+  if(!appConfig.ownerUsername&&promptIfMissing){
+    const ownerUsername=prompt('Enter your Instagram username (ownerUsername, without @):','');
+    if(ownerUsername)saveAppConfig({ownerUsername:normalizeInstagramUsername(ownerUsername)});
+  }
+  const token=(appConfig.igToken||'').trim();
+  const businessId=(appConfig.igBusinessId||'').trim();
+  const owner=(appConfig.ownerUsername||'').trim();
+  if(!token||!businessId||!owner)throw new Error(`Missing API config. Save {"igToken":"...","igBusinessId":"...","ownerUsername":"..."} in localStorage key "${APP_CONFIG_KEY}".`);
   if(token.length<MIN_ACCESS_TOKEN_LENGTH)throw new Error('Invalid igToken format.');
   if(!BUSINESS_ID_REGEX.test(businessId))throw new Error('Invalid igBusinessId format.');
-  saveAppConfig({igToken:token,igBusinessId:businessId,ownerUsername:normalizeInstagramUsername(ownerUsername)});
+  saveAppConfig({igToken:token,igBusinessId:businessId,ownerUsername:normalizeInstagramUsername(owner)});
   return appConfig;
 }
 
@@ -1290,7 +1289,7 @@ function renderContentCalendar(d){
    ══════════════════════════════════════ */
 async function callGeminiAPI(payload){
   const key=getGemKey();
-  if(!key)throw new Error(`Missing Gemini API key. Add ?geminiKey=YOUR_KEY in URL or save {"geminiKey":"YOUR_KEY"} under localStorage key "${APP_CONFIG_KEY}".`);
+  if(!key)throw new Error(`Missing Gemini API key. Save {"geminiKey":"YOUR_KEY"} under localStorage key "${APP_CONFIG_KEY}".`);
   const models=['gemini-2.0-flash','gemini-1.5-flash'];
   let lastErr='Unknown error';
   for(const m of models){
