@@ -721,6 +721,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
       <div class="dev-note">
         <strong>✅ Live Graph API:</strong> Clicking "Continue with Instagram" pulls live profile data directly via the Meta Business API endpoint.
       </div>
+      <p class="modal-note" style="margin-top:10px">If prompted, enter igToken, igBusinessId, and ownerUsername once — they are saved in your browser only.</p>
       <p class="modal-note">Only public Instagram accounts or approved test users can be analyzed</p>
     </div>
     <div id="ms2" style="display:none;text-align:center;padding:20px 0">
@@ -762,14 +763,47 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
    Uses Official Instagram Graph API (Business Discovery)
    ═══════════════════════════════════════════════════ */
 
-// ── Real Instagram Credentials ──
-const IG_TOKEN = 'EAARoDGfWrOUBRCdvypHkJ1ZCjXGBbR1G5V3CTLDTZAJXJvm3rOrRp1fyyZCbZCIgcLT4ZAi2ZARrY6V2doFUEHD5OyHeZALI9FPFKyV6pUDwHfvCvE4rufxu6rAlf0Y4heGQDtZAIVV70A3vXNRHvnhbTndWsufpxHDLJmZAmdvjXVdmhSVKkKJj3Wa5ADsdSQN7q';
-const IG_BUSINESS_ID = '17841439005652255';
-const OWNER_USERNAME = 'velixo_edits';
+// ── Runtime API Config (no hardcoded secrets) ──
+const APP_CONFIG_KEY='gramiq-config';
+let appConfig=loadAppConfig();
+function loadAppConfig(){
+  let fromStorage={};
+  try{fromStorage=JSON.parse(localStorage.getItem(APP_CONFIG_KEY)||'{}')||{}}catch{}
+  const params=new URLSearchParams(location.search);
+  const fromQuery={
+    igToken:params.get('igToken')||'',
+    igBusinessId:params.get('igBusinessId')||'',
+    ownerUsername:params.get('ownerUsername')||'',
+    geminiKey:params.get('geminiKey')||''
+  };
+  return {...fromStorage,...Object.fromEntries(Object.entries(fromQuery).filter(([,v])=>v))};
+}
+function saveAppConfig(next){
+  appConfig={...appConfig,...next};
+  localStorage.setItem(APP_CONFIG_KEY,JSON.stringify(appConfig));
+}
+function normalizeInstagramUsername(value){
+  const clean=String(value||'').trim().replace(/^@+/,'').toLowerCase().replace(/[^a-z0-9._]/g,'');
+  if(!clean||clean.length>30)throw new Error('Enter a valid Instagram username.');
+  return clean;
+}
+function ensureApiConfig(interactive=false){
+  const missing=[];
+  if(!appConfig.igToken)missing.push('igToken');
+  if(!appConfig.igBusinessId)missing.push('igBusinessId');
+  if(!appConfig.ownerUsername)missing.push('ownerUsername');
+  if(!missing.length)return appConfig;
+  if(!interactive)throw new Error('Missing API config. Add igToken, igBusinessId, and ownerUsername via URL params or localStorage.');
+  const igToken=appConfig.igToken||prompt('Paste your Meta Page Access Token (igToken):','');
+  const igBusinessId=appConfig.igBusinessId||prompt('Paste your Instagram Business ID (igBusinessId):','');
+  const ownerUsername=appConfig.ownerUsername||prompt('Enter your Instagram username (ownerUsername, without @):','');
+  if(!igToken||!igBusinessId||!ownerUsername)throw new Error('Instagram API config is required to continue.');
+  saveAppConfig({igToken:igToken.trim(),igBusinessId:igBusinessId.trim(),ownerUsername:normalizeInstagramUsername(ownerUsername)});
+  return appConfig;
+}
 
 // ── Gemini Config ──
-var _gk1='AIzaSyAxWuWntzZjSX9',_gk2='ZQ4N12fKIH1NvyDpzTG8';
-function getGemKey(){return _gk1+_gk2}
+function getGemKey(){return appConfig.geminiKey||''}
 
 /* ══════════════════════════════════════
    REAL INSTAGRAM API ENGINE
@@ -777,16 +811,22 @@ function getGemKey(){return _gk1+_gk2}
    or Creator account using Business Discovery
    ══════════════════════════════════════ */
 async function fetchInstagramData(targetUsername) {
+  const cfg=ensureApiConfig(false);
+  const safeUsername=normalizeInstagramUsername(targetUsername);
   // We use the Business Discovery API. It requires querying against OUR Business ID,
   // but allows us to fetch data about the targetUsername.
-  const fields = `business_discovery.username(${targetUsername}){username,name,followers_count,follows_count,media_count,profile_picture_url,media.limit(20){id,caption,media_type,media_url,permalink,like_count,comments_count,timestamp}}`;
-  const url = `https://graph.facebook.com/v22.0/${IG_BUSINESS_ID}?fields=${fields}&access_token=${IG_TOKEN}`;
+  const fields = `business_discovery.username(${safeUsername}){username,name,followers_count,follows_count,media_count,profile_picture_url,media.limit(20){id,caption,media_type,media_url,permalink,like_count,comments_count,timestamp}}`;
+  const qs=new URLSearchParams({fields,access_token:cfg.igToken});
+  const url = `https://graph.facebook.com/v22.0/${cfg.igBusinessId}?${qs.toString()}`;
 
   const res = await fetch(url);
   const json = await res.json();
 
   if (json.error) {
-    throw new Error(json.error.message || 'API Error: Verify that this is a public Business/Creator account.');
+    const code=json.error.code;
+    if(code===10)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a Page token, and instagram_basic + instagram_manage_insights are granted.');
+    if(code===190)throw new Error('Invalid or expired token (#190). Generate a fresh Page access token and retry.');
+    throw new Error(json.error.message || `API Error (HTTP ${res.status}): Verify this is a public Business/Creator account.`);
   }
 
   const bd = json.business_discovery;
@@ -966,7 +1006,8 @@ async function startAnalysis(){
   if(!input){document.getElementById('accountInput').focus();return}
   showLoading();
   try{
-    const clean=input.replace('@','').toLowerCase();
+    ensureApiConfig(true);
+    const clean=normalizeInstagramUsername(input);
     
     // Fetch REAL live data from Instagram Graph API for ANY queried user
     const [realData] = await Promise.all([
@@ -974,7 +1015,7 @@ async function startAnalysis(){
       new Promise(res=>runLoadingSteps(res))
     ]);
 
-    isOwner = !!(loggedInUser && loggedInUser.username === clean) || (clean === OWNER_USERNAME && loggedInUser);
+    isOwner = !!(loggedInUser && loggedInUser.username === clean) || (clean === appConfig.ownerUsername && loggedInUser);
     accountContext = realData;
     chatHistory = [];
     
@@ -1228,11 +1269,13 @@ function renderContentCalendar(d){
    GEMINI AI
    ══════════════════════════════════════ */
 async function callGeminiAPI(payload){
+  const key=getGemKey();
+  if(!key)throw new Error('Missing Gemini API key. Provide geminiKey via URL params or localStorage.');
   const models=['gemini-2.0-flash','gemini-1.5-flash'];
   let lastErr='Unknown error';
   for(const m of models){
     try{
-      const res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+getGemKey(),{
+      const res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+key,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const j=await res.json();
       if(!res.ok){lastErr=(j?.error?.message)||('HTTP '+res.status);continue}
@@ -1438,13 +1481,14 @@ async function simulateIgLogin(){
   document.getElementById('ms2').style.display='block';
   document.getElementById('msMsg').textContent='Connecting to Instagram…';
   try{
+    ensureApiConfig(true);
     // Pull real data from Instagram Graph API
     document.getElementById('msMsg').textContent='Authenticating with Meta API…';
     await new Promise(r=>setTimeout(r,600));
     document.getElementById('msMsg').textContent='Fetching your live profile data…';
-    const data = await fetchInstagramData(OWNER_USERNAME);
+    const data = await fetchInstagramData(appConfig.ownerUsername);
     
-    loggedInUser={username:OWNER_USERNAME,displayName:data.displayName};
+    loggedInUser={username:appConfig.ownerUsername,displayName:data.displayName};
     isOwner=true;
     document.getElementById('navLoginBtn').style.display='none';
     const pill=document.getElementById('navUserPill');
@@ -1486,7 +1530,7 @@ async function loadCompare(){
   document.getElementById('cmpBody').classList.remove('show');
   document.getElementById('cmpLoading').classList.add('show');
   try{
-    const cmpData = await fetchInstagramData(input.replace('@',''));
+    const cmpData = await fetchInstagramData(normalizeInstagramUsername(input));
     document.getElementById('cmpLoading').classList.remove('show');
     renderCompare(accountContext,cmpData);
     document.getElementById('cmpBody').classList.add('show');
