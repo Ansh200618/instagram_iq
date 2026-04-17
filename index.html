@@ -784,21 +784,25 @@ function saveAppConfig(next){
 }
 function normalizeInstagramUsername(value){
   const clean=String(value||'').trim().replace(/^@+/,'').toLowerCase().replace(/[^a-z0-9._]/g,'');
-  if(!clean||clean.length>30)throw new Error('Enter a valid Instagram username.');
+  if(!clean||clean.length>30||clean.startsWith('.')||clean.includes('..'))throw new Error('Enter a valid Instagram username.');
   return clean;
 }
-function ensureApiConfig(interactive=false){
+function ensureApiConfig(promptIfMissing=false){
   const missing=[];
   if(!appConfig.igToken)missing.push('igToken');
   if(!appConfig.igBusinessId)missing.push('igBusinessId');
   if(!appConfig.ownerUsername)missing.push('ownerUsername');
   if(!missing.length)return appConfig;
-  if(!interactive)throw new Error('Missing API config. Add igToken, igBusinessId, and ownerUsername via URL params or localStorage.');
+  if(!promptIfMissing)throw new Error('Missing API config. Add igToken, igBusinessId, and ownerUsername via URL params or localStorage.');
   const igToken=appConfig.igToken||prompt('Paste your Meta Page Access Token (igToken):','');
   const igBusinessId=appConfig.igBusinessId||prompt('Paste your Instagram Business ID (igBusinessId):','');
   const ownerUsername=appConfig.ownerUsername||prompt('Enter your Instagram username (ownerUsername, without @):','');
   if(!igToken||!igBusinessId||!ownerUsername)throw new Error('Instagram API config is required to continue.');
-  saveAppConfig({igToken:igToken.trim(),igBusinessId:igBusinessId.trim(),ownerUsername:normalizeInstagramUsername(ownerUsername)});
+  const token=igToken.trim();
+  const businessId=igBusinessId.trim();
+  if(token.length<20)throw new Error('Invalid igToken format.');
+  if(!/^\d{10,}$/.test(businessId))throw new Error('Invalid igBusinessId format.');
+  saveAppConfig({igToken:token,igBusinessId:businessId,ownerUsername:normalizeInstagramUsername(ownerUsername)});
   return appConfig;
 }
 
@@ -824,7 +828,7 @@ async function fetchInstagramData(targetUsername) {
 
   if (json.error) {
     const code=json.error.code;
-    if(code===10)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a Page token, and instagram_basic + instagram_manage_insights are granted.');
+    if(code===10)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a Page token, and instagram_basic and instagram_manage_insights are granted.');
     if(code===190)throw new Error('Invalid or expired token (#190). Generate a fresh Page access token and retry.');
     throw new Error(json.error.message || `API Error (HTTP ${res.status}): Verify this is a public Business/Creator account.`);
   }
