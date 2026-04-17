@@ -770,10 +770,11 @@ const MIN_ACCESS_TOKEN_LENGTH=20;
 const MIN_BUSINESS_ID_LENGTH=10;
 const ERROR_CODE_PERMISSION_DENIED=10;
 const ERROR_CODE_INVALID_TOKEN=190;
+const BUSINESS_ID_REGEX=new RegExp(`^\\d{${MIN_BUSINESS_ID_LENGTH},}$`);
 let appConfig=loadAppConfig();
 function loadAppConfig(){
   let fromStorage={};
-  try{fromStorage=JSON.parse(localStorage.getItem(APP_CONFIG_KEY)||'{}')||{}}catch{}
+  try{fromStorage=JSON.parse(localStorage.getItem(APP_CONFIG_KEY)||'{}')||{}}catch(e){console.warn('Invalid saved config in localStorage for',APP_CONFIG_KEY,e)}
   const params=new URLSearchParams(location.search);
   const fromQuery={
     igToken:params.get('igToken')||'',
@@ -788,6 +789,8 @@ function saveAppConfig(next){
   localStorage.setItem(APP_CONFIG_KEY,JSON.stringify(appConfig));
 }
 function normalizeInstagramUsername(value){
+  // Instagram username constraints enforced here: max length 30,
+  // no leading dot/underscore, and no consecutive dots/underscores.
   const clean=String(value||'').trim().replace(/^@+/,'').toLowerCase().replace(/[^a-z0-9._]/g,'');
   if(
     !clean||
@@ -814,7 +817,7 @@ function ensureApiConfig(promptIfMissing=false){
   const token=igToken.trim();
   const businessId=igBusinessId.trim();
   if(token.length<MIN_ACCESS_TOKEN_LENGTH)throw new Error('Invalid igToken format.');
-  if(!new RegExp(`^\\d{${MIN_BUSINESS_ID_LENGTH},}$`).test(businessId))throw new Error('Invalid igBusinessId format.');
+  if(!BUSINESS_ID_REGEX.test(businessId))throw new Error('Invalid igBusinessId format.');
   saveAppConfig({igToken:token,igBusinessId:businessId,ownerUsername:normalizeInstagramUsername(ownerUsername)});
   return appConfig;
 }
@@ -841,7 +844,7 @@ async function fetchInstagramData(targetUsername) {
 
   if (json.error) {
     const code=json.error.code;
-    if(code===ERROR_CODE_PERMISSION_DENIED)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a Page token, and instagram_basic and instagram_manage_insights are granted.');
+    if(code===ERROR_CODE_PERMISSION_DENIED)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a Page token, and both instagram_basic AND instagram_manage_insights permissions are granted.');
     if(code===ERROR_CODE_INVALID_TOKEN)throw new Error('Invalid or expired token (#190). Generate a fresh Page access token and retry.');
     throw new Error(json.error.message || `API Error (HTTP ${res.status}): Verify this is a public Business/Creator account.`);
   }
@@ -1287,7 +1290,7 @@ function renderContentCalendar(d){
    ══════════════════════════════════════ */
 async function callGeminiAPI(payload){
   const key=getGemKey();
-  if(!key)throw new Error('Missing Gemini API key. Provide geminiKey via URL params or localStorage.');
+  if(!key)throw new Error(`Missing Gemini API key. Add ?geminiKey=YOUR_KEY in URL or save {"geminiKey":"YOUR_KEY"} under localStorage key "${APP_CONFIG_KEY}".`);
   const models=['gemini-2.0-flash','gemini-1.5-flash'];
   let lastErr='Unknown error';
   for(const m of models){
