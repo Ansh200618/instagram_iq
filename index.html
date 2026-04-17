@@ -774,7 +774,12 @@ const BUSINESS_ID_REGEX=new RegExp(`^\\d{${MIN_BUSINESS_ID_LENGTH},}$`);
 let appConfig=loadAppConfig();
 function loadAppConfig(){
   let fromStorage={};
-  try{fromStorage=JSON.parse(localStorage.getItem(APP_CONFIG_KEY)||'{}')||{}}catch(e){console.warn('Invalid saved config in localStorage for',APP_CONFIG_KEY,e)}
+  try{
+    const raw=localStorage.getItem(APP_CONFIG_KEY)||'{}';
+    fromStorage=JSON.parse(raw)||{};
+  }catch(e){
+    console.warn('Invalid saved config in localStorage for',APP_CONFIG_KEY,e);
+  }
   const params=new URLSearchParams(location.search);
   const fromQuery={
     igBusinessId:params.get('igBusinessId')||'',
@@ -787,17 +792,13 @@ function saveAppConfig(next){
   localStorage.setItem(APP_CONFIG_KEY,JSON.stringify(appConfig));
 }
 function normalizeInstagramUsername(value){
-  // Instagram username constraints enforced here: max length 30,
-  // no leading dot/underscore, and no consecutive dots/underscores.
+  // Instagram username constraints enforced here: max length 30 and no consecutive dots.
   const clean=String(value||'').trim().replace(/^@+/,'').toLowerCase().replace(/[^a-z0-9._]/g,'');
   if(
     !clean||
     clean.length>MAX_INSTAGRAM_USERNAME_LENGTH||
     clean.startsWith('.')||
-    clean.includes('..')||
-    clean.startsWith('_')||
-    clean.endsWith('_')||
-    clean.includes('__')
+    clean.includes('..')
   )throw new Error('Enter a valid Instagram username.');
   return clean;
 }
@@ -814,7 +815,7 @@ function ensureApiConfig(promptIfMissing=false){
   const token=(appConfig.igToken||'').trim();
   const businessId=(appConfig.igBusinessId||'').trim();
   const owner=(appConfig.ownerUsername||'').trim();
-  if(!token||!businessId||!owner)throw new Error(`Missing API config. Save {"igToken":"...","igBusinessId":"...","ownerUsername":"..."} in localStorage key "${APP_CONFIG_KEY}".`);
+  if(!token||!businessId||!owner)throw new Error(`Missing API config (${missing.join(', ')}). Save {"igToken":"...","igBusinessId":"...","ownerUsername":"..."} in localStorage key "${APP_CONFIG_KEY}".`);
   if(token.length<MIN_ACCESS_TOKEN_LENGTH)throw new Error('Invalid igToken format.');
   if(!BUSINESS_ID_REGEX.test(businessId))throw new Error('Invalid igBusinessId format.');
   saveAppConfig({igToken:token,igBusinessId:businessId,ownerUsername:normalizeInstagramUsername(owner)});
@@ -843,7 +844,7 @@ async function fetchInstagramData(targetUsername) {
 
   if (json.error) {
     const code=json.error.code;
-    if(code===ERROR_CODE_PERMISSION_DENIED)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a Page token, and both instagram_basic AND instagram_manage_insights permissions are granted.');
+    if(code===ERROR_CODE_PERMISSION_DENIED)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a valid Page token, and required Instagram/Page permissions are granted.');
     if(code===ERROR_CODE_INVALID_TOKEN)throw new Error('Invalid or expired token (#190). Generate a fresh Page access token and retry.');
     throw new Error(json.error.message || `API Error (HTTP ${res.status}): Verify this is a public Business/Creator account.`);
   }
