@@ -818,13 +818,13 @@ async function fetchInstagramData(targetUsername) {
 
   // Normalise the response — different versions of this API nest data differently
   const root = postsJson?.data && typeof postsJson.data === 'object' && !Array.isArray(postsJson.data) ? postsJson.data : postsJson;
+  const edgeItems = Array.isArray(root?.result?.edges)
+    ? root.result.edges
+    : (Array.isArray(postsJson?.result?.edges) ? postsJson.result.edges : null);
+
   let items = [];
-  if (Array.isArray(root?.result?.edges)) {
-    items = root.result.edges
-      .map(edge => edge?.node)
-      .filter(node => node && typeof node === 'object' && !Array.isArray(node));
-  } else if (Array.isArray(postsJson?.result?.edges)) {
-    items = postsJson.result.edges
+  if (edgeItems) {
+    items = edgeItems
       .map(edge => edge?.node)
       .filter(node => node && typeof node === 'object' && !Array.isArray(node));
   } else {
@@ -896,31 +896,30 @@ async function fetchInstagramData(targetUsername) {
   };
 
   // Map raw items → normalised media array
-  bd.media.data = items.slice(0, 20).map(m => {
-    const source = m;
+  bd.media.data = items.slice(0, 20).map(post => {
     // Caption can be a string or an object {text: "..."}
-    const captionText = typeof source?.caption === 'string' ? source.caption : (source?.caption?.text || '');
+    const captionText = typeof post?.caption === 'string' ? post.caption : (post?.caption?.text || '');
     // media_type: RapidAPI uses 1=photo, 2=video, 8=carousel OR strings 'IMAGE','VIDEO','CAROUSEL_ALBUM'
     let mediaType = 'IMAGE';
     // GraphQL-style responses expose type in `__typename` (e.g. GraphVideo, GraphSidecar).
-    const rawType = source?.media_type || source?.__typename;
+    const rawType = post?.media_type || post?.__typename;
     if (rawType === 2   || rawType === 'VIDEO')          mediaType = 'VIDEO';
     else if (rawType === 8 || rawType === 'CAROUSEL_ALBUM' || rawType === 'GraphSidecar') mediaType = 'CAROUSEL_ALBUM';
     else if (rawType === 'GraphVideo') mediaType = 'VIDEO';
 
-    const permalink = source?.permalink
-      || (source?.shortcode ? `https://www.instagram.com/p/${source.shortcode}/` : null)
-      || (source?.code ? `https://www.instagram.com/p/${source.code}/` : null)
+    const permalink = post?.permalink
+      || (post?.shortcode ? `https://www.instagram.com/p/${post.shortcode}/` : null)
+      || (post?.code ? `https://www.instagram.com/p/${post.code}/` : null)
       || '';
 
     return {
-      id:             source?.id || source?.pk || '',
+      id:             post?.id || post?.pk || '',
       caption:        captionText,
       media_type:     mediaType,
-      like_count:     source?.like_count || source?.likes?.count || source?.edge_media_preview_like?.count || 0,
-      comments_count: source?.comment_count || source?.comments_count || source?.edge_media_to_comment?.count || 0,
+      like_count:     post?.like_count || post?.likes?.count || post?.edge_media_preview_like?.count || 0,
+      comments_count: post?.comment_count || post?.comments_count || post?.edge_media_to_comment?.count || 0,
       permalink,
-      timestamp:      source?.taken_at || source?.taken_at_timestamp || source?.timestamp || 0
+      timestamp:      post?.taken_at || post?.taken_at_timestamp || post?.timestamp || 0
     };
   });
 
