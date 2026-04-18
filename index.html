@@ -1297,6 +1297,7 @@ const NICHES={
 // ── App state ──
 let charts={}, accountContext=null, chatHistory=[], isOwner=false, loggedInUser=null;
 let cmpCharts={}, themeMode='auto';
+const LOW_CONFIDENCE_THRESHOLD = 0.25;
 
 // ── Utils ──
 function fmtNum(n){n=parseInt(n)||0;if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toString()}
@@ -1390,7 +1391,7 @@ function renderDashboard(d){
   // KPIs
   const erCls=d.engRate>=3?'up':'down';
   const growthVal=Number.isFinite(parseFloat(d.growthMoM))?parseFloat(d.growthMoM):0;
-  const lowConfidence = (d.dataConfidence || 0) < 0.25;
+  const lowConfidence = (d.dataConfidence || 0) < LOW_CONFIDENCE_THRESHOLD;
   const growthLabel = lowConfidence
     ? 'Limited sample — trend unavailable'
     : ((growthVal >= 0 ? '+' : '') + growthVal.toFixed(1) + '% ER trend');
