@@ -858,7 +858,7 @@ async function fetchInstagramData(targetUsername) {
   }
 
   // Some API variants return counts without a full user object; keep analysis usable in that case.
-  if ((!userRaw || (!userRaw.username && !userRaw.pk)) && (items.length > 0 || rootStats.hasData)) {
+  if ((!userRaw.username && !userRaw.pk) && (items.length > 0 || rootStats.hasData)) {
     userRaw.username = userRaw.username || safeUsername;
     userRaw.follower_count = userRaw.follower_count || rootStats.followers_count;
     userRaw.followers_count = userRaw.followers_count || rootStats.followers_count;
@@ -869,7 +869,7 @@ async function fetchInstagramData(targetUsername) {
     userRaw.profile_picture_url = userRaw.profile_picture_url || rootStats.profile_picture_url;
   }
 
-  if (!userRaw || (!userRaw.username && !userRaw.pk && items.length === 0 && !rootStats.hasData)) {
+  if (!userRaw.username && !userRaw.pk && items.length === 0 && !rootStats.hasData) {
     throw new Error(`Could not read profile data for @${safeUsername}. Please verify the username and try again (this can also happen with private/restricted accounts or temporary API limits).`);
   }
 
@@ -1060,6 +1060,10 @@ function extractProfileStats(...sources) {
       for (const k of keys) {
         const v = c?.[k];
         if (typeof v === 'string' && v.trim()) return v.trim();
+        if (v && typeof v === 'object') {
+          const nestedUrl = v?.url || v?.src || v?.uri;
+          if (typeof nestedUrl === 'string' && nestedUrl.trim()) return nestedUrl.trim();
+        }
       }
     }
     return '';
