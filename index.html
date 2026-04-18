@@ -1071,7 +1071,7 @@ async function fetchInstagramData(targetUsername) {
   const AUDIENCE_CONFIDENCE_FOLLOWER_TARGET = 100;
   const sampleConfidence = Math.min(1, media.length / SAMPLE_CONFIDENCE_POST_TARGET);
   const audienceConfidence = Math.min(1, followers / AUDIENCE_CONFIDENCE_FOLLOWER_TARGET);
-  const dataConfidence = parseFloat((sampleConfidence * audienceConfidence).toFixed(2));
+  const dataConfidence = Math.round(sampleConfidence * audienceConfidence * 100) / 100;
   const confidenceAdjustedScore = Math.round(50 + ((baseViralScore - 50) * dataConfidence));
   const viralScore = Math.min(95, Math.max(10, confidenceAdjustedScore));
 
