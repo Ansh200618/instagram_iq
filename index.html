@@ -897,7 +897,7 @@ async function fetchInstagramData(targetUsername) {
 
   // Map raw items → normalised media array
   bd.media.data = items.slice(0, 20).map(m => {
-    const source = m?.node && typeof m.node === 'object' && !Array.isArray(m.node) ? m.node : m;
+    const source = m;
     // Caption can be a string or an object {text: "..."}
     const captionText = typeof source?.caption === 'string' ? source.caption : (source?.caption?.text || '');
     // media_type: RapidAPI uses 1=photo, 2=video, 8=carousel OR strings 'IMAGE','VIDEO','CAROUSEL_ALBUM'
@@ -909,8 +909,9 @@ async function fetchInstagramData(targetUsername) {
     else if (rawType === 'GraphVideo') mediaType = 'VIDEO';
 
     const permalink = source?.permalink
-      || (source?.shortcode ? `https://www.instagram.com/p/${source.shortcode}/` : '')
-      || (source?.code ? `https://www.instagram.com/p/${source.code}/` : '');
+      || (source?.shortcode ? `https://www.instagram.com/p/${source.shortcode}/` : null)
+      || (source?.code ? `https://www.instagram.com/p/${source.code}/` : null)
+      || '';
 
     return {
       id:             source?.id || source?.pk || '',
