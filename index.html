@@ -1023,7 +1023,7 @@ async function fetchInstagramData(targetUsername) {
 }
 
 async function fetchInstagramFromCandidates(paths, body, label) {
-  let lastKnownError = '';
+  let lastEndpointError = '';
   for (const path of paths) {
     try {
       const res = await fetch(`https://${RAPIDAPI_HOST}${path}`, {
@@ -1036,37 +1036,39 @@ async function fetchInstagramFromCandidates(paths, body, label) {
         body: JSON.stringify(body || {})
       });
       if (!res.ok) {
-        lastKnownError = `HTTP ${res.status} on ${path}`;
+        lastEndpointError = `HTTP ${res.status} on ${path}`;
         continue;
       }
       const json = await res.json();
       const apiError = getInstagramApiError(json);
       if (apiError) {
-        lastKnownError = `${path}: ${apiError}`;
+        lastEndpointError = `${path}: ${apiError}`;
         continue;
       }
       return json;
     } catch (e) {
-      lastKnownError = `${path}: ${e.message || 'Network error'}`;
+      lastEndpointError = `${path}: ${e.message || 'Network error'}`;
     }
   }
-  throw new Error(`Instagram ${label} request failed. ${lastKnownError || 'No compatible endpoint responded successfully.'}`);
+  throw new Error(`Instagram ${label} request failed. ${lastEndpointError || 'No compatible endpoint responded successfully.'}`);
 }
 
 function getInstagramApiError(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return 'Instagram API returned an invalid response. Please retry.';
+  if (!payload || typeof payload !== 'object') return 'Instagram API returned an invalid response. Please retry.';
+  if (Array.isArray(payload)) return '';
   const message = typeof payload.message === 'string' ? payload.message.trim() : '';
   const error = typeof payload.error === 'string' ? payload.error.trim() : '';
   const status = String(payload.status || payload.state || '').toLowerCase();
+  const hasDataInObject = payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data);
   const hasData = !!(
     payload.data || payload.items || payload.posts || payload.media || payload.user ||
-    (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data) && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
+    (hasDataInObject && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
   );
-  const looksLikeKnownApiFailureMessage = /(private|not found|invalid|suspend(?:ed)?|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
+  const matchesFailurePattern = /(private|not found|invalid|suspend(?:ed)?|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
 
   if (error) return error;
-  if (['error','failed','fail'].includes(status) && message) return message;
-  if (!hasData && message && looksLikeKnownApiFailureMessage) return message;
+  if (['error', 'failed', 'fail'].includes(status) && message) return message;
+  if (!hasData && message && matchesFailurePattern) return message;
   return '';
 }
 
