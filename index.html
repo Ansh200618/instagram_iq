@@ -809,35 +809,55 @@ function getGemKey(){return appConfig.geminiKey||''}
 async function fetchInstagramData(targetUsername) {
   const safeUsername = normalizeInstagramUsername(targetUsername);
 
-  // ── Fetch posts (includes user profile data in each item) ──
-  const postsRes = await fetch('https://instagram120.p.rapidapi.com/api/instagram/posts', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-rapidapi-host': RAPIDAPI_HOST,
-      'x-rapidapi-key': RAPIDAPI_KEY
-    },
-    body: JSON.stringify({ username: safeUsername, maxId: '' })
-  });
-
-  if (!postsRes.ok) {
-    throw new Error(`API request failed (HTTP ${postsRes.status}). Please try again.`);
-  }
-
-  const postsJson = await postsRes.json();
-
-  // Handle explicit API-level errors
-  if (postsJson.error || postsJson.message) {
-    throw new Error(postsJson.error || postsJson.message || 'Unknown API error. Check the username and retry.');
-  }
+  // ── Fetch posts (try both old and new endpoint shapes) ──
+  const postsJson = await fetchInstagramFromCandidates(
+    ['/posts', '/api/instagram/posts'],
+    { username: safeUsername, maxId: '' },
+    'posts'
+  );
 
   // Normalise the response — different versions of this API nest data differently
-  const root    = postsJson.data || postsJson;
-  const items   = root.items || root.posts || root.media || [];
-  const userRaw = root.user || (items.length > 0 ? items[0].user : null) || {};
+  const root = postsJson?.data && typeof postsJson.data === 'object' && !Array.isArray(postsJson.data) ? postsJson.data : postsJson;
+  const items = Array.isArray(root?.items) ? root.items
+    : Array.isArray(root?.posts) ? root.posts
+    : Array.isArray(root?.media) ? root.media
+    : Array.isArray(postsJson?.items) ? postsJson.items
+    : [];
+  const userRaw = root?.user
+    || root?.owner
+    || root?.profile
+    || root?.account
+    || postsJson?.user
+    || postsJson?.profile
+    || (items.length > 0 ? (items?.[0]?.user || items?.[0]?.owner || items?.[0]?.profile) : null)
+    || {};
+
+  // Some endpoint variants return profile data only via dedicated profile/userInfo routes
+  if (!userRaw || (!userRaw.username && !userRaw.pk)) {
+    const profileJson = await fetchInstagramFromCandidates(
+      ['/profile', '/userInfo', '/api/instagram/profile', '/api/instagram/userInfo'],
+      { username: safeUsername },
+      'profile'
+    );
+    const profileRoot = profileJson?.data && typeof profileJson.data === 'object' && !Array.isArray(profileJson.data) ? profileJson.data : profileJson;
+    const profileUser = profileRoot?.user || profileRoot?.profile || profileRoot?.account || profileJson?.user || profileJson?.profile || {};
+    if (profileUser && (profileUser.username || profileUser.pk)) {
+      userRaw.username = userRaw.username || profileUser.username;
+      userRaw.pk = userRaw.pk || profileUser.pk;
+      userRaw.full_name = userRaw.full_name || profileUser.full_name || profileUser.name;
+      userRaw.name = userRaw.name || profileUser.name;
+      userRaw.follower_count = userRaw.follower_count || profileUser.follower_count || profileUser.followers_count;
+      userRaw.followers_count = userRaw.followers_count || profileUser.followers_count || profileUser.follower_count;
+      userRaw.following_count = userRaw.following_count || profileUser.following_count || profileUser.follows_count;
+      userRaw.follows_count = userRaw.follows_count || profileUser.follows_count || profileUser.following_count;
+      userRaw.media_count = userRaw.media_count || profileUser.media_count;
+      userRaw.profile_pic_url = userRaw.profile_pic_url || profileUser.profile_pic_url || profileUser.profile_picture_url;
+      userRaw.profile_picture_url = userRaw.profile_picture_url || profileUser.profile_picture_url || profileUser.profile_pic_url;
+    }
+  }
 
   if (!userRaw || (!userRaw.username && !userRaw.pk)) {
-    throw new Error(`No data found for @${safeUsername}. The account may be private, suspended, or the username may be misspelled.`);
+    throw new Error(`Could not read profile data for @${safeUsername}. Please verify the username and try again (this can also happen with private/restricted accounts or temporary API limits).`);
   }
 
   // Build a unified profile object from however the API returns it
@@ -1000,6 +1020,56 @@ async function fetchInstagramData(targetUsername) {
     insights,
     hashtags
   };
+}
+
+async function fetchInstagramFromCandidates(paths, body, label) {
+  let lastEndpointError = '';
+  for (const path of paths) {
+    try {
+      const res = await fetch(`https://${RAPIDAPI_HOST}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-rapidapi-host': RAPIDAPI_HOST,
+          'x-rapidapi-key': RAPIDAPI_KEY
+        },
+        body: JSON.stringify(body || {})
+      });
+      if (!res.ok) {
+        lastEndpointError = `HTTP ${res.status} on ${path}`;
+        continue;
+      }
+      const json = await res.json();
+      const apiError = getInstagramApiError(json);
+      if (apiError) {
+        lastEndpointError = `${path}: ${apiError}`;
+        continue;
+      }
+      return json;
+    } catch (e) {
+      lastEndpointError = `${path}: ${e.message || 'Network error'}`;
+    }
+  }
+  throw new Error(`Instagram ${label} request failed. ${lastEndpointError || 'No compatible endpoint responded successfully.'}`);
+}
+
+function getInstagramApiError(payload) {
+  if (!payload || typeof payload !== 'object') return 'Instagram API returned an invalid response. Please retry.';
+  if (Array.isArray(payload)) return '';
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  const error = typeof payload.error === 'string' ? payload.error.trim() : '';
+  const status = String(payload.status || payload.state || '').toLowerCase();
+  const hasDataInObject = payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data);
+  const hasData = !!(
+    payload.data || payload.items || payload.posts || payload.media || payload.user ||
+    (hasDataInObject && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
+  );
+  const matchesFailurePattern = /(private|not found|invalid|suspend(?:ed)?|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
+
+  if (error) return error;
+  if (['error', 'failed', 'fail'].includes(status) && message) return message;
+  if (!hasData && message && matchesFailurePattern) return message;
+  return '';
 }
 
 // ── Niche Data (UI specific) ──
