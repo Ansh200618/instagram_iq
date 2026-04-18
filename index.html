@@ -1062,10 +1062,15 @@ async function fetchInstagramData(targetUsername) {
   else if(combinedText.includes('science') || combinedText.includes('learn') || combinedText.includes('education')) { niche = 'Education'; conf = 87; }
   else if(combinedText.includes('soccer') || combinedText.includes('sports') || combinedText.includes('football')) { niche = 'Sports'; conf = 95; }
 
-  // Viral Score based on engagement benchmark, tempered by data confidence
+  // Viral score based on engagement benchmark, tempered by data confidence.
+  // We cap at 95 (not 99) to avoid overconfident "perfect" scores on estimated data.
   const baseViralScore = Math.round((avgEr / 3) * 50 + 20);
-  const sampleConfidence = Math.min(1, media.length / 12);
-  const audienceConfidence = Math.min(1, followers / 100);
+  // 12 posts ≈ a reasonable minimum sample for stable recent-performance trend.
+  const SAMPLE_CONFIDENCE_POST_TARGET = 12;
+  // 100 followers ≈ minimum audience size where ER outliers are less extreme.
+  const AUDIENCE_CONFIDENCE_FOLLOWER_TARGET = 100;
+  const sampleConfidence = Math.min(1, media.length / SAMPLE_CONFIDENCE_POST_TARGET);
+  const audienceConfidence = Math.min(1, followers / AUDIENCE_CONFIDENCE_FOLLOWER_TARGET);
   const dataConfidence = parseFloat((sampleConfidence * audienceConfidence).toFixed(2));
   const confidenceAdjustedScore = Math.round(50 + ((baseViralScore - 50) * dataConfidence));
   const viralScore = Math.min(95, Math.max(10, confidenceAdjustedScore));
@@ -1124,7 +1129,7 @@ async function fetchInstagramData(targetUsername) {
     };
   });
 
-  // Generate dynamic insights
+  // Generate insights (base audit insight + conditional insights)
   const insights = [];
   insights.push({title:'Live Data Audit', summary:`Analyzed ${media.length} recent posts from RapidAPI Instagram data.`, impact:'API Snapshot', support:'RapidAPI Instagram API'});
   if (contentMix.Reels > 50) {
