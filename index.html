@@ -935,6 +935,23 @@ async function fetchInstagramData(targetUsername) {
   let totalEng = 0;
   let reels = 0, carousels = 0, photos = 0;
   const hashtagCounts = {};
+  const monthBuckets = new Map();
+  const monthFmt = new Intl.DateTimeFormat('en-US', { month: 'short' });
+  const timelineFallback = [];
+  const normalizeTimestamp = (raw) => {
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      return raw < 1e12 ? raw * 1000 : raw;
+    }
+    if (typeof raw === 'string') {
+      const parsedNum = Number(raw);
+      if (Number.isFinite(parsedNum) && raw.trim() !== '') {
+        return parsedNum < 1e12 ? parsedNum * 1000 : parsedNum;
+      }
+      const parsedDate = Date.parse(raw);
+      if (Number.isFinite(parsedDate)) return parsedDate;
+    }
+    return 0;
+  };
 
   const recentPosts = media.map(m => {
     const likes = m.like_count || 0;
@@ -953,8 +970,34 @@ async function fetchInstagramData(targetUsername) {
     const tags = caption.match(/#[a-zA-Z0-9_]+/g) || [];
     tags.forEach(t => {
       const lower = t.toLowerCase();
-      hashtagCounts[lower] = (hashtagCounts[lower] || 0) + 1;
+      if (!hashtagCounts[lower]) hashtagCounts[lower] = { count: 0, totalEng: 0 };
+      hashtagCounts[lower].count += 1;
+      hashtagCounts[lower].totalEng += eng;
     });
+
+    const ts = normalizeTimestamp(m.timestamp);
+    if (ts > 0) {
+      const d = new Date(ts);
+      if (!Number.isNaN(d.getTime())) {
+        const bucketKey = `${d.getFullYear()}-${d.getMonth()}`;
+        if (!monthBuckets.has(bucketKey)) {
+          monthBuckets.set(bucketKey, {
+            year: d.getFullYear(),
+            month: d.getMonth(),
+            label: monthFmt.format(d),
+            posts: 0,
+            totalEr: 0,
+            totalEngagement: 0
+          });
+        }
+        const bucket = monthBuckets.get(bucketKey);
+        bucket.posts += 1;
+        bucket.totalEr += er;
+        bucket.totalEngagement += eng;
+      }
+    } else {
+      timelineFallback.push({ er, eng });
+    }
 
     return {
       caption: caption.slice(0, 80) || 'No caption',
@@ -993,18 +1036,38 @@ async function fetchInstagramData(targetUsername) {
   // Viral Score based on Engagement Rate vs typical benchmarks
   const viralScore = Math.min(99, Math.max(10, Math.round((avgEr / 3) * 50 + 20)));
 
-  // Generate monthly historical trend *based on real recent averages*
-  // (API doesn't provide historical timeline, so we simulate variance around the actual average)
-  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const labels=[],engData=[],postData=[],reachData=[];
-  for(let i=5;i>=0;i--){
-    const d=new Date();d.setMonth(d.getMonth()-i);
-    labels.push(months[d.getMonth()]);
-    // +/- a slight variance off the real current average
-    engData.push(Math.max(0.1, parseFloat((avgEr + (Math.random()*1-0.5)).toFixed(2))));
-    postData.push(Math.max(1, Math.floor(posts/12) + Math.floor(Math.random()*5)));
-    reachData.push(Math.round(followers*(0.05+Math.random()*0.15)));
+  // Build trend series from real post timestamps when available.
+  const labels = [], engData = [], postData = [], reachData = [];
+  const sortedMonths = Array.from(monthBuckets.values())
+    .sort((a, b) => (a.year - b.year) || (a.month - b.month))
+    .slice(-6);
+  // Approximate reach from engagement when the API does not provide historical reach.
+  const REACH_FROM_ENG_MULTIPLIER = 8;
+  if (sortedMonths.length > 0) {
+    sortedMonths.forEach(bucket => {
+      labels.push(bucket.label);
+      postData.push(bucket.posts);
+      engData.push(parseFloat((bucket.totalEr / Math.max(bucket.posts, 1)).toFixed(2)));
+      reachData.push(Math.round(bucket.totalEngagement * REACH_FROM_ENG_MULTIPLIER));
+    });
+  } else {
+    const fallback = timelineFallback.slice(0, 6).reverse();
+    fallback.forEach((point, i) => {
+      labels.push(`Post ${i + 1}`);
+      postData.push(1);
+      engData.push(parseFloat(point.er.toFixed(2)));
+      reachData.push(Math.round(point.eng * REACH_FROM_ENG_MULTIPLIER));
+    });
+    if (!fallback.length) {
+      labels.push('Current');
+      postData.push(0);
+      engData.push(parseFloat(avgEr.toFixed(2)));
+      reachData.push(Math.round(totalEng * REACH_FROM_ENG_MULTIPLIER));
+    }
   }
+  const baselineEr = engData[0] || avgEr || 0;
+  const latestEr = engData[engData.length - 1] || avgEr || 0;
+  const growthMoM = baselineEr > 0 ? parseFloat((((latestEr - baselineEr) / baselineEr) * 100).toFixed(1)) : 0;
 
   // Radar scores derived from real API metrics
   const engScore = Math.min(100, Math.round(avgEr * 20));
@@ -1013,12 +1076,19 @@ async function fetchInstagramData(targetUsername) {
   const growScore = viralScore;
 
   // Process Hashtags
-  const sortedTags = Object.entries(hashtagCounts).sort((a,b) => b[1] - a[1]).slice(0, 5);
-  const hashtags = sortedTags.map((t, i) => ({
-    tag: t[0],
-    reach: Math.round(followers * (0.05 + Math.random()*0.05)),
-    mult: parseFloat((1.1 + (5-i)*0.1).toFixed(1))
-  }));
+  const avgPostEngagement = media.length > 0 ? (totalEng / media.length) : 0;
+  const sortedTags = Object.entries(hashtagCounts)
+    .sort((a,b) => (b[1].count - a[1].count) || (b[1].totalEng - a[1].totalEng))
+    .slice(0, 5);
+  const hashtags = sortedTags.map((t) => {
+    const hashtagAvgEng = t[1].totalEng / Math.max(t[1].count, 1);
+    const hashtagMult = avgPostEngagement > 0 ? (hashtagAvgEng / avgPostEngagement) : 1;
+    return {
+      tag: t[0],
+      reach: Math.round(hashtagAvgEng),
+      mult: parseFloat(hashtagMult.toFixed(1))
+    };
+  });
 
   // Generate dynamic insights
   const insights = [];
@@ -1043,8 +1113,13 @@ async function fetchInstagramData(targetUsername) {
     following,
     posts,
     engRate: avgEr,
+    growthMoM,
     viralScore,
-    avatarColor: ['#f72585','#7209b7','#4361ee','#fb5607','#06d6a0'][Math.floor(Math.random()*5)],
+    avatarColor: (() => {
+      const palette = ['#f72585','#7209b7','#4361ee','#fb5607','#06d6a0'];
+      const seed = Array.from(String(bd.username || safeUsername || '')).reduce((acc, character) => acc + character.charCodeAt(0), 0);
+      return palette[seed % palette.length];
+    })(),
     profilePicture: bd.profile_picture_url || '',
     labels, engData, postData, reachData,
     contentMix,
@@ -1273,9 +1348,10 @@ function renderDashboard(d){
 
   // KPIs
   const erCls=d.engRate>=3?'up':'down';
-  const growPct='+'+rand(5,28)+'% MoM';
+  const growthVal=Number.isFinite(parseFloat(d.growthMoM))?parseFloat(d.growthMoM):0;
+  const growthLabel = (growthVal >= 0 ? '+' : '') + growthVal.toFixed(1) + '% ER trend';
   document.getElementById('kpiGrid').innerHTML=[
-    {label:'FOLLOWERS',value:fmtNum(d.followers),change:growPct+' growth',cls:'up',accent:'--pink'},
+    {label:'FOLLOWERS',value:fmtNum(d.followers),change:growthLabel,cls:growthVal>=0?'up':'down',accent:'--pink'},
     {label:'FOLLOWING',value:fmtNum(d.following),change:'Follow ratio: '+(d.followers/Math.max(d.following,1)>100?'great':'balanced'),cls:'up',accent:'--purple'},
     {label:'AVG ENGAGEMENT',value:d.engRate+'%',change:d.engRate>=3?'Above 3% benchmark ✓':'Below 3% benchmark ⚠',cls:erCls,accent:'--green'},
     {label:'TOTAL POSTS',value:fmtNum(d.posts),change:'Content library size',cls:'up',accent:'--cyan'},
