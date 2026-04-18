@@ -453,7 +453,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
     </select>
     <div class="nav-badge">INSTAGRAM INTELLIGENCE</div>
     <div class="nav-user-pill" id="navUserPill">
-      <img id="navUserImg" src="" alt="">
+      <img id="navUserImg" src="" alt="" style="display:none">
       <span id="navUserName"></span>
       <button class="nav-logout" onclick="logoutUser()" title="Sign out">✕</button>
     </div>
@@ -516,7 +516,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
       </div>
     </div>
     <div class="dash-actions">
-      <div class="api-badge">📡 LIVE META API DATA</div>
+      <div class="api-badge">📡 LIVE RAPIDAPI DATA</div>
       <button class="compare-btn" id="compareBtn" onclick="startCompare()" style="display:none">⇄ COMPARE ACCOUNT</button>
       <button class="back-btn" onclick="goBack()">← NEW ANALYSIS</button>
     </div>
@@ -719,10 +719,10 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
         <span style="font-size:20px">📸</span> Continue with Instagram
       </button>
       <div class="dev-note">
-        <strong>✅ Live Graph API:</strong> Clicking "Continue with Instagram" pulls live profile data directly via the Meta Business API endpoint.
+        <strong>✅ Live RapidAPI:</strong> Clicking "Continue with Instagram" pulls live profile data directly via the Instagram120 API. You will be prompted for your Instagram username.
       </div>
-      <p class="modal-note" style="margin-top:10px">Set igToken, igBusinessId, and ownerUsername in browser localStorage key <code>gramiq-config</code> before connecting.</p>
-      <p class="modal-note">Only public Instagram accounts or approved test users can be analyzed</p>
+      <p class="modal-note" style="margin-top:10px">Enter any public Instagram username when prompted to connect as owner</p>
+      <p class="modal-note">Owner mode unlocks the AI recommendation wizard, content calendar, and health audit</p>
     </div>
     <div id="ms2" style="display:none;text-align:center;padding:20px 0">
       <div class="loader-ring" style="margin:0 auto 20px"></div>
@@ -755,7 +755,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
   </div>
 </div>
 
-<footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by Meta Graph API</footer>
+<footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by Instagram120 RapidAPI</footer>
 
 <script>
 /* ═══════════════════════════════════════════════════
@@ -763,101 +763,120 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
    Uses Official Instagram Graph API (Business Discovery)
    ═══════════════════════════════════════════════════ */
 
-// ── Runtime API Config (no hardcoded secrets) ──
-const APP_CONFIG_KEY='gramiq-config';
-const MAX_INSTAGRAM_USERNAME_LENGTH=30;
-const MIN_ACCESS_TOKEN_LENGTH=20;
-const MIN_BUSINESS_ID_LENGTH=10;
-const ERROR_CODE_PERMISSION_DENIED=10;
-const ERROR_CODE_INVALID_TOKEN=190;
-const BUSINESS_ID_REGEX=new RegExp(`^\\d{${MIN_BUSINESS_ID_LENGTH},}$`);
-let appConfig=loadAppConfig();
+// ── RapidAPI Configuration ──
+const RAPIDAPI_KEY  = 'd3580be2a0msha1bc8c38eec29d5p145a84jsn35cffc4e70f8';
+const RAPIDAPI_HOST = 'instagram120.p.rapidapi.com';
+
+// ── Owner / Gemini config (localStorage only) ──
+const APP_CONFIG_KEY = 'gramiq-config';
+const MAX_INSTAGRAM_USERNAME_LENGTH = 30;
+let appConfig = loadAppConfig();
+
 function loadAppConfig(){
-  let fromStorage={};
+  let fromStorage = {};
   try{
-    const raw=localStorage.getItem(APP_CONFIG_KEY)||'{}';
-    fromStorage=JSON.parse(raw)||{};
+    const raw = localStorage.getItem(APP_CONFIG_KEY) || '{}';
+    fromStorage = JSON.parse(raw) || {};
   }catch(e){
-    console.warn('Invalid saved config in localStorage for',APP_CONFIG_KEY,e);
+    console.warn('Invalid saved config in localStorage for', APP_CONFIG_KEY, e);
   }
-  const params=new URLSearchParams(location.search);
-  const fromQuery={
-    igBusinessId:params.get('igBusinessId')||'',
-    ownerUsername:params.get('ownerUsername')||''
-  };
-  return {...fromStorage,...Object.fromEntries(Object.entries(fromQuery).filter(([,v])=>v))};
+  const params = new URLSearchParams(location.search);
+  const ownerFromQuery = params.get('ownerUsername') || '';
+  if(ownerFromQuery) fromStorage.ownerUsername = ownerFromQuery;
+  return fromStorage;
 }
+
 function saveAppConfig(next){
-  appConfig={...appConfig,...next};
-  localStorage.setItem(APP_CONFIG_KEY,JSON.stringify(appConfig));
+  appConfig = {...appConfig, ...next};
+  localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(appConfig));
 }
+
 function normalizeInstagramUsername(value){
-  // Instagram username constraints enforced here: max length 30 and no consecutive dots.
-  const clean=String(value||'').trim().replace(/^@+/,'').toLowerCase().replace(/[^a-z0-9._]/g,'');
-  if(
-    !clean||
-    clean.length>MAX_INSTAGRAM_USERNAME_LENGTH||
-    clean.startsWith('.')||
-    clean.includes('..')
-  )throw new Error('Enter a valid Instagram username.');
+  const clean = String(value || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._]/g, '');
+  if(!clean || clean.length > MAX_INSTAGRAM_USERNAME_LENGTH || clean.startsWith('.') || clean.includes('..'))
+    throw new Error('Enter a valid Instagram username (max 30 chars, no leading dots or double dots).');
   return clean;
-}
-function ensureApiConfig(promptIfMissing=false){
-  const missing=[];
-  if(!appConfig.igToken)missing.push('igToken');
-  if(!appConfig.igBusinessId)missing.push('igBusinessId');
-  if(!appConfig.ownerUsername)missing.push('ownerUsername');
-  if(!missing.length)return appConfig;
-  if(!appConfig.ownerUsername&&promptIfMissing){
-    const ownerUsername=prompt('Enter your Instagram username (ownerUsername, without @):','');
-    if(ownerUsername)saveAppConfig({ownerUsername:normalizeInstagramUsername(ownerUsername)});
-  }
-  const token=(appConfig.igToken||'').trim();
-  const businessId=(appConfig.igBusinessId||'').trim();
-  const owner=(appConfig.ownerUsername||'').trim();
-  if(!token||!businessId||!owner)throw new Error(`Missing API config (${missing.join(', ')}). Save {"igToken":"...","igBusinessId":"...","ownerUsername":"..."} in localStorage key "${APP_CONFIG_KEY}".`);
-  if(token.length<MIN_ACCESS_TOKEN_LENGTH)throw new Error('Invalid igToken format.');
-  if(!BUSINESS_ID_REGEX.test(businessId))throw new Error('Invalid igBusinessId format.');
-  saveAppConfig({igToken:token,igBusinessId:businessId,ownerUsername:normalizeInstagramUsername(owner)});
-  return appConfig;
 }
 
 // ── Gemini Config ──
 function getGemKey(){return appConfig.geminiKey||''}
 
 /* ══════════════════════════════════════
-   REAL INSTAGRAM API ENGINE
-   Fetches live data for ANY public Business
-   or Creator account using Business Discovery
+   RAPIDAPI INSTAGRAM ENGINE
+   Fetches live data for ANY Instagram account
+   via instagram120.p.rapidapi.com
    ══════════════════════════════════════ */
 async function fetchInstagramData(targetUsername) {
-  const cfg=ensureApiConfig(false);
-  const safeUsername=normalizeInstagramUsername(targetUsername);
-  // We use the Business Discovery API. It requires querying against OUR Business ID,
-  // but allows us to fetch data about the targetUsername.
-  const fields = `business_discovery.username(${safeUsername}){username,name,followers_count,follows_count,media_count,profile_picture_url,media.limit(20){id,caption,media_type,media_url,permalink,like_count,comments_count,timestamp}}`;
-  const qs=new URLSearchParams({fields,access_token:cfg.igToken});
-  const url = `https://graph.facebook.com/v22.0/${cfg.igBusinessId}?${qs.toString()}`;
+  const safeUsername = normalizeInstagramUsername(targetUsername);
 
-  const res = await fetch(url);
-  const json = await res.json();
+  // ── Fetch posts (includes user profile data in each item) ──
+  const postsRes = await fetch('https://instagram120.p.rapidapi.com/api/instagram/posts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-rapidapi-host': RAPIDAPI_HOST,
+      'x-rapidapi-key': RAPIDAPI_KEY
+    },
+    body: JSON.stringify({ username: safeUsername, maxId: '' })
+  });
 
-  if (json.error) {
-    const code=json.error.code;
-    if(code===ERROR_CODE_PERMISSION_DENIED)throw new Error('Permission denied (#10). Ensure the app is Live (or user is app role), token is a valid Page token, and required Instagram/Page permissions are granted.');
-    if(code===ERROR_CODE_INVALID_TOKEN)throw new Error('Invalid or expired token (#190). Generate a fresh Page access token and retry.');
-    throw new Error(json.error.message || `API Error (HTTP ${res.status}): Verify this is a public Business/Creator account.`);
+  if (!postsRes.ok) {
+    throw new Error(`API request failed (HTTP ${postsRes.status}). Please try again.`);
   }
 
-  const bd = json.business_discovery;
-  if (!bd) {
-    throw new Error("Could not find data for this user. Ensure they are a public Business or Creator account on Instagram.");
+  const postsJson = await postsRes.json();
+
+  // Handle explicit API-level errors
+  if (postsJson.error || postsJson.message) {
+    throw new Error(postsJson.error || postsJson.message || 'Unknown API error. Check the username and retry.');
   }
 
+  // Normalise the response — different versions of this API nest data differently
+  const root    = postsJson.data || postsJson;
+  const items   = root.items || root.posts || root.media || [];
+  const userRaw = root.user || (items.length > 0 ? items[0].user : null) || {};
+
+  if (!userRaw || (!userRaw.username && !userRaw.pk)) {
+    throw new Error(`No data found for @${safeUsername}. The account may be private, suspended, or the username may be misspelled.`);
+  }
+
+  // Build a unified profile object from however the API returns it
+  const bd = {
+    username:            userRaw.username || safeUsername,
+    name:                userRaw.full_name || userRaw.name || userRaw.username || safeUsername,
+    followers_count:     userRaw.follower_count  || userRaw.followers_count  || userRaw.edge_followed_by?.count || 0,
+    follows_count:       userRaw.following_count || userRaw.follows_count    || userRaw.edge_follow?.count      || 0,
+    media_count:         userRaw.media_count      || userRaw.edge_owner_to_timeline_media?.count || items.length,
+    profile_picture_url: userRaw.profile_pic_url || userRaw.profile_picture_url || '',
+    media: { data: [] }
+  };
+
+  // Map raw items → normalised media array
+  bd.media.data = items.slice(0, 20).map(m => {
+    // Caption can be a string or an object {text: "..."}
+    const captionText = typeof m.caption === 'string' ? m.caption : (m.caption?.text || '');
+    // media_type: RapidAPI uses 1=photo, 2=video, 8=carousel OR strings 'IMAGE','VIDEO','CAROUSEL_ALBUM'
+    let mediaType = 'IMAGE';
+    const rawType = m.media_type;
+    if (rawType === 2   || rawType === 'VIDEO')          mediaType = 'VIDEO';
+    else if (rawType === 8 || rawType === 'CAROUSEL_ALBUM') mediaType = 'CAROUSEL_ALBUM';
+
+    return {
+      id:             m.id || m.pk || '',
+      caption:        captionText,
+      media_type:     mediaType,
+      like_count:     m.like_count      || m.likes?.count || 0,
+      comments_count: m.comment_count   || m.comments_count || 0,
+      permalink:      m.permalink       || (m.code ? `https://www.instagram.com/p/${m.code}/` : ''),
+      timestamp:      m.taken_at        || m.timestamp || 0
+    };
+  });
+
+  // ── Normalised variables for the analytics block below ──
+  const media    = bd.media.data;
   const followers = bd.followers_count || 1;
-  const following = bd.follows_count || 0;
-  const posts = bd.media_count || 0;
-  const media = bd.media?.data || [];
+  const following = bd.follows_count   || 0;
+  const posts     = bd.media_count      || 0;
 
   // Compute real engagement from up to 20 recent posts
   let totalEng = 0;
@@ -1026,16 +1045,15 @@ async function startAnalysis(){
   if(!input){document.getElementById('accountInput').focus();return}
   showLoading();
   try{
-    ensureApiConfig(true);
     const clean=normalizeInstagramUsername(input);
     
-    // Fetch REAL live data from Instagram Graph API for ANY queried user
+    // Fetch live data via RapidAPI
     const [realData] = await Promise.all([
       fetchInstagramData(clean),
       new Promise(res=>runLoadingSteps(res))
     ]);
 
-    isOwner = !!(loggedInUser && loggedInUser.username === clean) || (clean === appConfig.ownerUsername && loggedInUser);
+    isOwner = !!(loggedInUser && loggedInUser.username === clean);
     accountContext = realData;
     chatHistory = [];
     
@@ -1501,41 +1519,53 @@ async function simulateIgLogin(){
   document.getElementById('ms2').style.display='block';
   document.getElementById('msMsg').textContent='Connecting to Instagram…';
   try{
-    ensureApiConfig(true);
-    // Pull real data from Instagram Graph API
-    document.getElementById('msMsg').textContent='Authenticating with Meta API…';
-    await new Promise(r=>setTimeout(r,600));
-    document.getElementById('msMsg').textContent='Fetching your live profile data…';
-    const data = await fetchInstagramData(appConfig.ownerUsername);
-    
-    loggedInUser={username:appConfig.ownerUsername,displayName:data.displayName};
-    isOwner=true;
-    document.getElementById('navLoginBtn').style.display='none';
-    const pill=document.getElementById('navUserPill');
-    if(data.profilePicture){
-      document.getElementById('navUserImg').src=data.profilePicture;
-      document.getElementById('navUserImg').style.display='block';
+    // Prompt for owner username if not already saved
+    let owner = (appConfig.ownerUsername || '').trim();
+    if(!owner){
+      owner = prompt('Enter YOUR Instagram username (without @):','') || '';
+      if(!owner){ closeLoginModal(); return; }
+      saveAppConfig({ownerUsername: normalizeInstagramUsername(owner)});
+      owner = appConfig.ownerUsername;
     }
-    document.getElementById('navUserName').textContent='Velixo ✓';
+    document.getElementById('msMsg').textContent='Fetching your live profile data…';
+    const data = await fetchInstagramData(owner);
+    
+    loggedInUser = {username: data.username.replace('@',''), displayName: data.displayName};
+    isOwner = true;
+    document.getElementById('navLoginBtn').style.display='none';
+    const pill = document.getElementById('navUserPill');
+    const imgEl = document.getElementById('navUserImg');
+    if(data.profilePicture){
+      imgEl.src = data.profilePicture;
+      imgEl.style.display = 'block';
+    } else {
+      imgEl.style.display = 'none';
+    }
+    document.getElementById('navUserName').textContent = data.displayName + ' ✓';
     pill.classList.add('active');
     closeLoginModal();
-    accountContext=data;chatHistory=[];
+    accountContext = data; chatHistory = [];
     renderDashboard(data);
   }catch(e){
     closeLoginModal();
-    alert('⚠️ Could not connect: '+(e.message||'API error')+'. Check token validity.');
+    alert('⚠️ Could not connect: '+(e.message||'API error')+'. Please check the username and retry.');
   }
 }
 
 function logoutUser(){
   loggedInUser=null;isOwner=false;
   document.getElementById('navLoginBtn').style.display='flex';
-  document.getElementById('navUserPill').classList.remove('active');
+  const pill=document.getElementById('navUserPill');
+  pill.classList.remove('active');
+  const imgEl=document.getElementById('navUserImg');
+  imgEl.src='';imgEl.style.display='none';
   document.getElementById('verifiedBadge').className='verified-badge';
   document.getElementById('healthPanel').classList.remove('show');
   document.getElementById('recPanel').style.display='none';
   document.getElementById('calPanel').style.display='none';
   document.getElementById('compareBtn').style.display='none';
+  // Clear saved owner so next login prompts for username again
+  saveAppConfig({ownerUsername:''});
 }
 
 /* ══════════════════════════════════════
@@ -1572,18 +1602,26 @@ function renderCompare(a,b){
     {label:'Reels %',va:(a.contentMix?.Reels||0)+'%',vb:(b.contentMix?.Reels||0)+'%',raw:[a.contentMix?.Reels||0,b.contentMix?.Reels||0]},
   ];
   function col(d,isYou){
-    const av = d.profilePicture ? `<img src="${d.profilePicture}" alt="" style="width:100%;height:100%;object-fit:cover" />` : `<span style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:#fff">${d.displayName.charAt(0)}</span>`;
-    const avWrap=`<div class="cmp-ch-avatar" style="background:${d.avatarColor||'var(--pink)'}">${av}</div>`;
-    return `<div>${avWrap.replace('</div>','</div>')}<div style="margin-left:0">
-      <div class="cmp-ch-head" style="margin-left:0">${avWrap}
-      <div><div class="cmp-ch-name">${esc(d.displayName)}</div>
-      <div class="cmp-ch-sub">${d.niche} · ${d.username}</div>
-      ${isYou?'<span class="cmp-you-badge">YOUR ACCOUNT</span>':''}</div></div>
+    const avInner = d.profilePicture
+      ? `<img src="${esc(d.profilePicture)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%" />`
+      : `<span style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:#fff">${esc(d.displayName.charAt(0))}</span>`;
+    const avStyle = `background:${d.avatarColor||'var(--pink)'}`;
+    return `<div>
+      <div class="cmp-ch-head">
+        <div class="cmp-ch-avatar" style="${avStyle}">${avInner}</div>
+        <div>
+          <div class="cmp-ch-name">${esc(d.displayName)}</div>
+          <div class="cmp-ch-sub">${esc(d.niche||'')} · ${esc(d.username||'')}</div>
+          ${isYou?'<span class="cmp-you-badge">YOUR ACCOUNT</span>':''}
+        </div>
+      </div>
       <div class="cmp-stat-grid">${metrics.map(m=>{
-        const t=m.raw[0]!==null?tag(m.raw[0],m.raw[1]):['tie','tie'];
-        return `<div class="cmp-stat-row"><div class="cmp-stat-label">${m.label}</div>
+        const t=tag(m.raw[0],m.raw[1]);
+        return `<div class="cmp-stat-row">
+          <div class="cmp-stat-label">${m.label}</div>
           <div class="cmp-stat-val ${isYou?t[0]:t[1]}">${isYou?m.va:m.vb}</div></div>`;
-      }).join('')}</div></div>`;
+      }).join('')}</div>
+    </div>`;
   }
   document.getElementById('cmpCols').innerHTML=col(a,true)+col(b,false);
   const insights=[];
