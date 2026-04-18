@@ -817,7 +817,7 @@ async function fetchInstagramData(targetUsername) {
   );
 
   // Normalise the response — different versions of this API nest data differently
-  const root = postsJson?.data && typeof postsJson.data === 'object' ? postsJson.data : postsJson;
+  const root = postsJson?.data && typeof postsJson.data === 'object' && !Array.isArray(postsJson.data) ? postsJson.data : postsJson;
   const items = Array.isArray(root?.items) ? root.items
     : Array.isArray(root?.posts) ? root.posts
     : Array.isArray(root?.media) ? root.media
@@ -829,7 +829,7 @@ async function fetchInstagramData(targetUsername) {
     || root?.account
     || postsJson?.user
     || postsJson?.profile
-    || (items.length > 0 ? (items[0].user || items[0].owner || items[0].profile) : null)
+    || (items.length > 0 ? (items?.[0]?.user || items?.[0]?.owner || items?.[0]?.profile) : null)
     || {};
 
   // Some endpoint variants return profile data only via dedicated profile/userInfo routes
@@ -839,7 +839,7 @@ async function fetchInstagramData(targetUsername) {
       { username: safeUsername },
       'profile'
     );
-    const profileRoot = profileJson?.data && typeof profileJson.data === 'object' ? profileJson.data : profileJson;
+    const profileRoot = profileJson?.data && typeof profileJson.data === 'object' && !Array.isArray(profileJson.data) ? profileJson.data : profileJson;
     const profileUser = profileRoot?.user || profileRoot?.profile || profileRoot?.account || profileJson?.user || profileJson?.profile || {};
     if (profileUser && (profileUser.username || profileUser.pk)) {
       userRaw.username = userRaw.username || profileUser.username;
@@ -1054,15 +1054,15 @@ async function fetchInstagramFromCandidates(paths, body, label) {
 }
 
 function getInstagramApiError(payload) {
-  if (!payload || typeof payload !== 'object') return 'Instagram API returned an invalid response. Please retry.';
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return 'Instagram API returned an invalid response. Please retry.';
   const message = typeof payload.message === 'string' ? payload.message.trim() : '';
   const error = typeof payload.error === 'string' ? payload.error.trim() : '';
   const status = String(payload.status || payload.state || '').toLowerCase();
   const hasData = !!(
     payload.data || payload.items || payload.posts || payload.media || payload.user ||
-    (payload.data && typeof payload.data === 'object' && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
+    (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data) && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
   );
-  const looksLikeKnownApiFailureMessage = /(private|not found|invalid|suspend|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
+  const looksLikeKnownApiFailureMessage = /(private|not found|invalid|suspend(?:ed)?|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
 
   if (error) return error;
   if (['error','failed','fail'].includes(status) && message) return message;
