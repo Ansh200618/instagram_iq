@@ -1064,6 +1064,7 @@ async function fetchInstagramData(targetUsername) {
 
   // Viral score based on engagement benchmark, tempered by data confidence.
   // We cap at 95 (not 99) to avoid overconfident "perfect" scores on estimated data.
+  // Formula basis: 3% ER benchmark, scaled by 50 points with a +20 floor offset.
   const baseViralScore = Math.round((avgEr / 3) * 50 + 20);
   // 12 posts ≈ a reasonable minimum sample for stable recent-performance trend.
   const SAMPLE_CONFIDENCE_POST_TARGET = 12;
@@ -1072,6 +1073,7 @@ async function fetchInstagramData(targetUsername) {
   const sampleConfidence = Math.min(1, media.length / SAMPLE_CONFIDENCE_POST_TARGET);
   const audienceConfidence = Math.min(1, followers / AUDIENCE_CONFIDENCE_FOLLOWER_TARGET);
   const dataConfidence = Math.round(sampleConfidence * audienceConfidence * 100) / 100;
+  // With very low confidence, score intentionally regresses toward neutral midpoint (50).
   const confidenceAdjustedScore = Math.round(50 + ((baseViralScore - 50) * dataConfidence));
   const viralScore = Math.min(95, Math.max(10, confidenceAdjustedScore));
 
