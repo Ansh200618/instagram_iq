@@ -1078,11 +1078,15 @@ async function fetchInstagramData(targetUsername) {
   const sortedTags = Object.entries(hashtagCounts)
     .sort((a,b) => (b[1].count - a[1].count) || (b[1].totalEng - a[1].totalEng))
     .slice(0, 5);
-  const hashtags = sortedTags.map((t, i) => ({
-    tag: t[0],
-    reach: Math.round(t[1].totalEng / Math.max(t[1].count, 1)),
-    mult: parseFloat((avgPostEngagement > 0 ? (t[1].totalEng / Math.max(t[1].count, 1)) / avgPostEngagement : 1).toFixed(1))
-  }));
+  const hashtags = sortedTags.map((t) => {
+    const hashtagAvgEng = t[1].totalEng / Math.max(t[1].count, 1);
+    const hashtagMult = avgPostEngagement > 0 ? (hashtagAvgEng / avgPostEngagement) : 1;
+    return {
+      tag: t[0],
+      reach: Math.round(hashtagAvgEng),
+      mult: parseFloat(hashtagMult.toFixed(1))
+    };
+  });
 
   // Generate dynamic insights
   const insights = [];
@@ -1343,9 +1347,9 @@ function renderDashboard(d){
   // KPIs
   const erCls=d.engRate>=3?'up':'down';
   const growthVal=Number.isFinite(parseFloat(d.growthMoM))?parseFloat(d.growthMoM):0;
-  const growPct=(growthVal>=0?'+':'')+growthVal.toFixed(1)+'% ER trend';
+  const growthLabel=(growthVal>=0?'+':'')+growthVal.toFixed(1)+'% ER trend';
   document.getElementById('kpiGrid').innerHTML=[
-    {label:'FOLLOWERS',value:fmtNum(d.followers),change:growPct,cls:growthVal>=0?'up':'down',accent:'--pink'},
+    {label:'FOLLOWERS',value:fmtNum(d.followers),change:growthLabel,cls:growthVal>=0?'up':'down',accent:'--pink'},
     {label:'FOLLOWING',value:fmtNum(d.following),change:'Follow ratio: '+(d.followers/Math.max(d.following,1)>100?'great':'balanced'),cls:'up',accent:'--purple'},
     {label:'AVG ENGAGEMENT',value:d.engRate+'%',change:d.engRate>=3?'Above 3% benchmark ✓':'Below 3% benchmark ⚠',cls:erCls,accent:'--green'},
     {label:'TOTAL POSTS',value:fmtNum(d.posts),change:'Content library size',cls:'up',accent:'--cyan'},
