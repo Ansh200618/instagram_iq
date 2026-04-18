@@ -808,6 +808,28 @@ function getGemKey(){return appConfig.geminiKey||''}
    ══════════════════════════════════════ */
 async function fetchInstagramData(targetUsername) {
   const safeUsername = normalizeInstagramUsername(targetUsername);
+  const parseCount = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+    if (typeof value === 'string') {
+      const cleaned = value.replace(/,/g, '').trim();
+      if (!cleaned) return 0;
+      const n = Number(cleaned);
+      if (Number.isFinite(n)) return Math.max(0, Math.round(n));
+    }
+    if (value && typeof value === 'object') {
+      const nested = value.count ?? value.value ?? value.total;
+      return parseCount(nested);
+    }
+    return 0;
+  };
+  const parseUrl = (value) => {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (value && typeof value === 'object') {
+      const nested = value.url || value.src || value.uri;
+      if (typeof nested === 'string' && nested.trim()) return nested.trim();
+    }
+    return '';
+  };
 
   // ── Fetch posts (try both old and new endpoint shapes) ──
   const postsJson = await fetchInstagramFromCandidates(
@@ -888,10 +910,10 @@ async function fetchInstagramData(targetUsername) {
   const bd = {
     username:            userRaw.username || safeUsername,
     name:                userRaw.full_name || userRaw.name || userRaw.username || safeUsername,
-    followers_count:     userRaw.follower_count  || userRaw.followers_count  || userRaw.edge_followed_by?.count || 0,
-    follows_count:       userRaw.following_count || userRaw.follows_count    || userRaw.edge_follow?.count      || 0,
-    media_count:         userRaw.media_count      || userRaw.edge_owner_to_timeline_media?.count || items.length,
-    profile_picture_url: userRaw.profile_pic_url || userRaw.profile_picture_url || '',
+    followers_count:     parseCount(userRaw.follower_count) || parseCount(userRaw.followers_count) || parseCount(userRaw.edge_followed_by?.count) || 0,
+    follows_count:       parseCount(userRaw.following_count) || parseCount(userRaw.follows_count) || parseCount(userRaw.edge_follow?.count) || 0,
+    media_count:         parseCount(userRaw.media_count) || parseCount(userRaw.edge_owner_to_timeline_media?.count) || items.length,
+    profile_picture_url: parseUrl(userRaw.profile_pic_url) || parseUrl(userRaw.profile_picture_url) || parseUrl(userRaw.hd_profile_pic_url_info) || '',
     media: { data: [] }
   };
 
@@ -918,8 +940,8 @@ async function fetchInstagramData(targetUsername) {
       id:             post?.id || post?.pk || '',
       caption:        captionText,
       media_type:     mediaType,
-      like_count:     post?.like_count || post?.likes?.count || post?.edge_media_preview_like?.count || 0,
-      comments_count: post?.comment_count || post?.comments_count || post?.edge_media_to_comment?.count || 0,
+      like_count:     parseCount(post?.like_count) || parseCount(post?.likes?.count) || parseCount(post?.edge_media_preview_like?.count) || 0,
+      comments_count: parseCount(post?.comment_count) || parseCount(post?.comments_count) || parseCount(post?.edge_media_to_comment?.count) || 0,
       permalink,
       timestamp:      post?.taken_at || post?.taken_at_timestamp || post?.timestamp || 0
     };
@@ -927,7 +949,7 @@ async function fetchInstagramData(targetUsername) {
 
   // ── Normalised variables for the analytics block below ──
   const media    = bd.media.data;
-  const followers = bd.followers_count || 1;
+  const followers = bd.followers_count || 0;
   const following = bd.follows_count   || 0;
   const posts     = bd.media_count      || 0;
 
@@ -1009,7 +1031,7 @@ async function fetchInstagramData(targetUsername) {
     };
   });
 
-  const avgEr = media.length > 0 ? parseFloat(((totalEng / media.length) / followers * 100).toFixed(2)) : 0;
+  const avgEr = (media.length > 0 && followers > 0) ? parseFloat(((totalEng / media.length) / followers * 100).toFixed(2)) : 0;
 
   // Content mix percentages
   const totalSample = Math.max(1, reels + carousels + photos);
@@ -1033,8 +1055,13 @@ async function fetchInstagramData(targetUsername) {
   else if(combinedText.includes('science') || combinedText.includes('learn') || combinedText.includes('education')) { niche = 'Education'; conf = 87; }
   else if(combinedText.includes('soccer') || combinedText.includes('sports') || combinedText.includes('football')) { niche = 'Sports'; conf = 95; }
 
-  // Viral Score based on Engagement Rate vs typical benchmarks
-  const viralScore = Math.min(99, Math.max(10, Math.round((avgEr / 3) * 50 + 20)));
+  // Viral Score based on engagement benchmark, tempered by data confidence
+  const baseViralScore = Math.round((avgEr / 3) * 50 + 20);
+  const sampleConfidence = Math.min(1, media.length / 12);
+  const audienceConfidence = Math.min(1, followers / 100);
+  const dataConfidence = parseFloat((sampleConfidence * audienceConfidence).toFixed(2));
+  const confidenceAdjustedScore = Math.round(50 + ((baseViralScore - 50) * dataConfidence));
+  const viralScore = Math.min(95, Math.max(10, confidenceAdjustedScore));
 
   // Build trend series from real post timestamps when available.
   const labels = [], engData = [], postData = [], reachData = [];
@@ -1070,7 +1097,7 @@ async function fetchInstagramData(targetUsername) {
   const growthMoM = baselineEr > 0 ? parseFloat((((latestEr - baselineEr) / baselineEr) * 100).toFixed(1)) : 0;
 
   // Radar scores derived from real API metrics
-  const engScore = Math.min(100, Math.round(avgEr * 20));
+  const engScore = Math.min(100, Math.round((avgEr * 20) * dataConfidence));
   const conScore = Math.min(100, Math.round(posts / 10));
   const seoScore = combinedText.includes('#') ? 85 : 40;
   const growScore = viralScore;
@@ -1092,7 +1119,7 @@ async function fetchInstagramData(targetUsername) {
 
   // Generate dynamic insights
   const insights = [];
-  insights.push({title:'Live Data Audit', summary:`Analyzed ${media.length} recent posts via official Meta Graph API.`, impact:'100% Accuracy', support:'Business Discovery API'});
+  insights.push({title:'Live Data Audit', summary:`Analyzed ${media.length} recent posts from RapidAPI Instagram data.`, impact:'API Snapshot', support:'RapidAPI'});
   if (contentMix.Reels > 50) {
     insights.push({title:'Reel-Heavy Strategy', summary:'Most of the recent content is short-form video.', impact:'High Reach Potential', support:`${contentMix.Reels}% Reels`});
   } else if (contentMix.Carousels > 30) {
@@ -1126,7 +1153,8 @@ async function fetchInstagramData(targetUsername) {
     radarScores: [engScore, conScore, seoScore, 80, growScore, 75],
     recentPosts,
     insights,
-    hashtags
+    hashtags,
+    dataConfidence
   };
 }
 
@@ -1141,11 +1169,26 @@ function extractProfileStats(...sources) {
     if (src?.profile && typeof src.profile === 'object') candidates.push(src.profile);
   });
 
+  const toCount = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+    if (typeof value === 'string') {
+      const cleaned = value.replace(/,/g, '').trim();
+      if (!cleaned) return 0;
+      const n = Number(cleaned);
+      if (Number.isFinite(n)) return Math.max(0, Math.round(n));
+    }
+    if (value && typeof value === 'object') {
+      const nested = value.count ?? value.value ?? value.total;
+      return toCount(nested);
+    }
+    return 0;
+  };
   const pick = (...keys) => {
     for (const c of candidates) {
       for (const k of keys) {
         const v = c?.[k];
-        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        const n = toCount(v);
+        if (n > 0) return n;
       }
     }
     return 0;
@@ -1349,11 +1392,18 @@ function renderDashboard(d){
   // KPIs
   const erCls=d.engRate>=3?'up':'down';
   const growthVal=Number.isFinite(parseFloat(d.growthMoM))?parseFloat(d.growthMoM):0;
-  const growthLabel = (growthVal >= 0 ? '+' : '') + growthVal.toFixed(1) + '% ER trend';
+  const lowConfidence = (d.dataConfidence || 0) < 0.25;
+  const growthLabel = lowConfidence
+    ? 'Limited sample — trend unavailable'
+    : ((growthVal >= 0 ? '+' : '') + growthVal.toFixed(1) + '% ER trend');
+  const engagementValue = lowConfidence ? 'N/A' : (d.engRate + '%');
+  const engagementChange = lowConfidence
+    ? 'Insufficient reliable audience/sample data'
+    : (d.engRate>=3?'Above 3% benchmark ✓':'Below 3% benchmark ⚠');
   document.getElementById('kpiGrid').innerHTML=[
     {label:'FOLLOWERS',value:fmtNum(d.followers),change:growthLabel,cls:growthVal>=0?'up':'down',accent:'--pink'},
     {label:'FOLLOWING',value:fmtNum(d.following),change:'Follow ratio: '+(d.followers/Math.max(d.following,1)>100?'great':'balanced'),cls:'up',accent:'--purple'},
-    {label:'AVG ENGAGEMENT',value:d.engRate+'%',change:d.engRate>=3?'Above 3% benchmark ✓':'Below 3% benchmark ⚠',cls:erCls,accent:'--green'},
+    {label:'AVG ENGAGEMENT',value:engagementValue,change:engagementChange,cls:lowConfidence?'down':erCls,accent:'--green'},
     {label:'TOTAL POSTS',value:fmtNum(d.posts),change:'Content library size',cls:'up',accent:'--cyan'},
     {label:'VIRAL SCORE',value:d.viralScore+'/100',change:viralTierLabel(d.viralScore),cls:'up',accent:'--orange'},
   ].map((k,i)=>`<div class="kpi-card" style="--accent-color:var(${k.accent});animation-delay:${i*0.07}s">
