@@ -818,13 +818,22 @@ async function fetchInstagramData(targetUsername) {
 
   // Normalise the response — different versions of this API nest data differently
   const root = postsJson?.data && typeof postsJson.data === 'object' && !Array.isArray(postsJson.data) ? postsJson.data : postsJson;
-  const items = Array.isArray(root?.items) ? root.items
-    : Array.isArray(root?.posts) ? root.posts
-    : Array.isArray(root?.media) ? root.media
-    : Array.isArray(root?.result?.edges) ? root.result.edges
-    : Array.isArray(postsJson?.items) ? postsJson.items
-    : Array.isArray(postsJson?.result?.edges) ? postsJson.result.edges
-    : [];
+  let items = [];
+  if (Array.isArray(root?.result?.edges)) {
+    items = root.result.edges
+      .map(edge => edge?.node)
+      .filter(node => node && typeof node === 'object' && !Array.isArray(node));
+  } else if (Array.isArray(postsJson?.result?.edges)) {
+    items = postsJson.result.edges
+      .map(edge => edge?.node)
+      .filter(node => node && typeof node === 'object' && !Array.isArray(node));
+  } else {
+    items = Array.isArray(root?.items) ? root.items
+      : Array.isArray(root?.posts) ? root.posts
+      : Array.isArray(root?.media) ? root.media
+      : Array.isArray(postsJson?.items) ? postsJson.items
+      : [];
+  }
   const userRaw = root?.user
     || root?.owner
     || root?.profile
