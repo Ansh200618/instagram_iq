@@ -1012,8 +1012,8 @@ async function fetchInstagramData(targetUsername) {
   };
 }
 
-function getInstagramApiError(payload){
-  if(!payload || typeof payload !== 'object') return 'Instagram API returned an invalid response. Please retry.';
+function getInstagramApiError(payload) {
+  if (!payload || typeof payload !== 'object') return 'Instagram API returned an invalid response. Please retry.';
   const message = typeof payload.message === 'string' ? payload.message.trim() : '';
   const error = typeof payload.error === 'string' ? payload.error.trim() : '';
   const status = String(payload.status || payload.state || '').toLowerCase();
@@ -1021,10 +1021,11 @@ function getInstagramApiError(payload){
     payload.data || payload.items || payload.posts || payload.media || payload.user ||
     (payload.data && typeof payload.data === 'object' && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
   );
+  const looksLikeKnownApiFailureMessage = /(private|not found|invalid|suspend|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
 
-  if(error) return error;
-  if(['error','failed','fail'].includes(status) && message) return message;
-  if(!hasData && message && /(private|not found|invalid|suspend|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message)) return message;
+  if (error) return error;
+  if (['error','failed','fail'].includes(status) && message) return message;
+  if (!hasData && message && looksLikeKnownApiFailureMessage) return message;
   return '';
 }
 
