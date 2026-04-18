@@ -1041,13 +1041,14 @@ async function fetchInstagramData(targetUsername) {
   const sortedMonths = Array.from(monthBuckets.values())
     .sort((a, b) => (a.year - b.year) || (a.month - b.month))
     .slice(-6);
-  const reachMultiplier = 8;
+  // Approximate reach from engagement when the API does not provide historical reach.
+  const REACH_FROM_ENG_MULTIPLIER = 8;
   if (sortedMonths.length > 0) {
     sortedMonths.forEach(bucket => {
       labels.push(bucket.label);
       postData.push(bucket.posts);
       engData.push(parseFloat((bucket.totalEr / Math.max(bucket.posts, 1)).toFixed(2)));
-      reachData.push(Math.round(bucket.totalEngagement * reachMultiplier));
+      reachData.push(Math.round(bucket.totalEngagement * REACH_FROM_ENG_MULTIPLIER));
     });
   } else {
     const fallback = timelineFallback.slice(0, 6).reverse();
@@ -1055,13 +1056,13 @@ async function fetchInstagramData(targetUsername) {
       labels.push(`Post ${i + 1}`);
       postData.push(1);
       engData.push(parseFloat(point.er.toFixed(2)));
-      reachData.push(Math.round(point.eng * reachMultiplier));
+      reachData.push(Math.round(point.eng * REACH_FROM_ENG_MULTIPLIER));
     });
     if (!fallback.length) {
       labels.push('Current');
       postData.push(0);
       engData.push(parseFloat(avgEr.toFixed(2)));
-      reachData.push(Math.round(totalEng * reachMultiplier));
+      reachData.push(Math.round(totalEng * REACH_FROM_ENG_MULTIPLIER));
     }
   }
   const baselineEr = engData[0] || avgEr || 0;
@@ -1348,7 +1349,7 @@ function renderDashboard(d){
   // KPIs
   const erCls=d.engRate>=3?'up':'down';
   const growthVal=Number.isFinite(parseFloat(d.growthMoM))?parseFloat(d.growthMoM):0;
-  const growthLabel=(growthVal>=0?'+':'')+growthVal.toFixed(1)+'% ER trend';
+  const growthLabel = (growthVal >= 0 ? '+' : '') + growthVal.toFixed(1) + '% ER trend';
   document.getElementById('kpiGrid').innerHTML=[
     {label:'FOLLOWERS',value:fmtNum(d.followers),change:growthLabel,cls:growthVal>=0?'up':'down',accent:'--pink'},
     {label:'FOLLOWING',value:fmtNum(d.following),change:'Follow ratio: '+(d.followers/Math.max(d.following,1)>100?'great':'balanced'),cls:'up',accent:'--purple'},
