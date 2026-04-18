@@ -831,6 +831,7 @@ async function fetchInstagramData(targetUsername) {
     || postsJson?.profile
     || (items.length > 0 ? (items?.[0]?.user || items?.[0]?.owner || items?.[0]?.profile) : null)
     || {};
+  const rootStats = extractProfileStats(root, postsJson);
 
   // Some endpoint variants return profile data only via dedicated profile/userInfo routes
   if (!userRaw || (!userRaw.username && !userRaw.pk)) {
@@ -856,7 +857,19 @@ async function fetchInstagramData(targetUsername) {
     }
   }
 
-  if (!userRaw || (!userRaw.username && !userRaw.pk)) {
+  // Some API variants return counts without a full user object; keep analysis usable in that case.
+  if ((!userRaw.username && !userRaw.pk) && (items.length > 0 || rootStats.hasData)) {
+    userRaw.username = userRaw.username || safeUsername;
+    userRaw.follower_count = userRaw.follower_count || rootStats.followers_count;
+    userRaw.followers_count = userRaw.followers_count || rootStats.followers_count;
+    userRaw.following_count = userRaw.following_count || rootStats.follows_count;
+    userRaw.follows_count = userRaw.follows_count || rootStats.follows_count;
+    userRaw.media_count = userRaw.media_count || rootStats.media_count || items.length;
+    userRaw.profile_pic_url = userRaw.profile_pic_url || rootStats.profile_picture_url;
+    userRaw.profile_picture_url = userRaw.profile_picture_url || rootStats.profile_picture_url;
+  }
+
+  if (!userRaw.username && !userRaw.pk && items.length === 0 && !rootStats.hasData) {
     throw new Error(`Could not read profile data for @${safeUsername}. Please verify the username and try again (this can also happen with private/restricted accounts or temporary API limits).`);
   }
 
@@ -1019,6 +1032,64 @@ async function fetchInstagramData(targetUsername) {
     recentPosts,
     insights,
     hashtags
+  };
+}
+
+function extractProfileStats(...sources) {
+  const candidates = [];
+  sources.filter(Boolean).forEach(src => {
+    candidates.push(src);
+    if (src?.data && typeof src.data === 'object') candidates.push(src.data);
+    if (src?.stats && typeof src.stats === 'object') candidates.push(src.stats);
+    if (src?.user_info && typeof src.user_info === 'object') candidates.push(src.user_info);
+    if (src?.account && typeof src.account === 'object') candidates.push(src.account);
+    if (src?.profile && typeof src.profile === 'object') candidates.push(src.profile);
+  });
+
+  const pick = (...keys) => {
+    for (const c of candidates) {
+      for (const k of keys) {
+        const v = c?.[k];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+      }
+    }
+    return 0;
+  };
+  const pickString = (...keys) => {
+    for (const c of candidates) {
+      for (const k of keys) {
+        const v = c?.[k];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        if (v && typeof v === 'object') {
+          const nestedUrl = v?.url || v?.src || v?.uri;
+          if (typeof nestedUrl === 'string' && nestedUrl.trim()) return nestedUrl.trim();
+        }
+      }
+    }
+    return '';
+  };
+
+  const followers_count = pick(
+    'follower_count', 'followers_count', 'followers', 'subscriber_count',
+    'edge_followed_by_count', 'edge_followed_by'
+  );
+  const follows_count = pick(
+    'following_count', 'follows_count', 'following', 'follow_count',
+    'edge_follow_count', 'edge_follow'
+  );
+  const media_count = pick(
+    'media_count', 'posts_count', 'post_count', 'total_posts', 'total_media'
+  );
+  const profile_picture_url = pickString(
+    'profile_pic_url', 'profile_picture_url', 'avatar', 'avatar_url', 'hd_profile_pic_url_info'
+  );
+
+  return {
+    followers_count,
+    follows_count,
+    media_count,
+    profile_picture_url,
+    hasData: !!(followers_count || follows_count || media_count || profile_picture_url)
   };
 }
 
