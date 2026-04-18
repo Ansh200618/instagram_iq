@@ -798,6 +798,30 @@ function normalizeInstagramUsername(value){
   return clean;
 }
 
+function parseCountValue(value){
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/,/g, '').trim();
+    if (!cleaned) return 0;
+    const n = Number(cleaned);
+    if (Number.isFinite(n)) return Math.max(0, Math.round(n));
+  }
+  if (value && typeof value === 'object') {
+    const nested = value.count ?? value.value ?? value.total;
+    return parseCountValue(nested);
+  }
+  return 0;
+}
+
+function parseUrlValue(value){
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (value && typeof value === 'object') {
+    const nested = value.url || value.src || value.uri;
+    if (typeof nested === 'string' && nested.trim()) return nested.trim();
+  }
+  return '';
+}
+
 // ── Gemini Config ──
 function getGemKey(){return appConfig.geminiKey||''}
 
@@ -808,28 +832,6 @@ function getGemKey(){return appConfig.geminiKey||''}
    ══════════════════════════════════════ */
 async function fetchInstagramData(targetUsername) {
   const safeUsername = normalizeInstagramUsername(targetUsername);
-  const parseCount = (value) => {
-    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
-    if (typeof value === 'string') {
-      const cleaned = value.replace(/,/g, '').trim();
-      if (!cleaned) return 0;
-      const n = Number(cleaned);
-      if (Number.isFinite(n)) return Math.max(0, Math.round(n));
-    }
-    if (value && typeof value === 'object') {
-      const nested = value.count ?? value.value ?? value.total;
-      return parseCount(nested);
-    }
-    return 0;
-  };
-  const parseUrl = (value) => {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-    if (value && typeof value === 'object') {
-      const nested = value.url || value.src || value.uri;
-      if (typeof nested === 'string' && nested.trim()) return nested.trim();
-    }
-    return '';
-  };
 
   // ── Fetch posts (try both old and new endpoint shapes) ──
   const postsJson = await fetchInstagramFromCandidates(
@@ -907,13 +909,18 @@ async function fetchInstagramData(targetUsername) {
   }
 
   // Build a unified profile object from however the API returns it
+  const profilePictureUrl =
+    parseUrlValue(userRaw.profile_pic_url) ||
+    parseUrlValue(userRaw.profile_picture_url) ||
+    parseUrlValue(userRaw.hd_profile_pic_url_info) ||
+    '';
   const bd = {
     username:            userRaw.username || safeUsername,
     name:                userRaw.full_name || userRaw.name || userRaw.username || safeUsername,
-    followers_count:     parseCount(userRaw.follower_count) || parseCount(userRaw.followers_count) || parseCount(userRaw.edge_followed_by?.count) || 0,
-    follows_count:       parseCount(userRaw.following_count) || parseCount(userRaw.follows_count) || parseCount(userRaw.edge_follow?.count) || 0,
-    media_count:         parseCount(userRaw.media_count) || parseCount(userRaw.edge_owner_to_timeline_media?.count) || items.length,
-    profile_picture_url: parseUrl(userRaw.profile_pic_url) || parseUrl(userRaw.profile_picture_url) || parseUrl(userRaw.hd_profile_pic_url_info) || '',
+    followers_count:     parseCountValue(userRaw.follower_count) || parseCountValue(userRaw.followers_count) || parseCountValue(userRaw.edge_followed_by?.count) || 0,
+    follows_count:       parseCountValue(userRaw.following_count) || parseCountValue(userRaw.follows_count) || parseCountValue(userRaw.edge_follow?.count) || 0,
+    media_count:         parseCountValue(userRaw.media_count) || parseCountValue(userRaw.edge_owner_to_timeline_media?.count) || items.length,
+    profile_picture_url: profilePictureUrl,
     media: { data: [] }
   };
 
@@ -940,8 +947,8 @@ async function fetchInstagramData(targetUsername) {
       id:             post?.id || post?.pk || '',
       caption:        captionText,
       media_type:     mediaType,
-      like_count:     parseCount(post?.like_count) || parseCount(post?.likes?.count) || parseCount(post?.edge_media_preview_like?.count) || 0,
-      comments_count: parseCount(post?.comment_count) || parseCount(post?.comments_count) || parseCount(post?.edge_media_to_comment?.count) || 0,
+      like_count:     parseCountValue(post?.like_count) || parseCountValue(post?.likes?.count) || parseCountValue(post?.edge_media_preview_like?.count) || 0,
+      comments_count: parseCountValue(post?.comment_count) || parseCountValue(post?.comments_count) || parseCountValue(post?.edge_media_to_comment?.count) || 0,
       permalink,
       timestamp:      post?.taken_at || post?.taken_at_timestamp || post?.timestamp || 0
     };
@@ -1119,7 +1126,7 @@ async function fetchInstagramData(targetUsername) {
 
   // Generate dynamic insights
   const insights = [];
-  insights.push({title:'Live Data Audit', summary:`Analyzed ${media.length} recent posts from RapidAPI Instagram data.`, impact:'API Snapshot', support:'RapidAPI'});
+  insights.push({title:'Live Data Audit', summary:`Analyzed ${media.length} recent posts from RapidAPI Instagram data.`, impact:'API Snapshot', support:'RapidAPI Instagram API'});
   if (contentMix.Reels > 50) {
     insights.push({title:'Reel-Heavy Strategy', summary:'Most of the recent content is short-form video.', impact:'High Reach Potential', support:`${contentMix.Reels}% Reels`});
   } else if (contentMix.Carousels > 30) {
@@ -1169,25 +1176,11 @@ function extractProfileStats(...sources) {
     if (src?.profile && typeof src.profile === 'object') candidates.push(src.profile);
   });
 
-  const toCount = (value) => {
-    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
-    if (typeof value === 'string') {
-      const cleaned = value.replace(/,/g, '').trim();
-      if (!cleaned) return 0;
-      const n = Number(cleaned);
-      if (Number.isFinite(n)) return Math.max(0, Math.round(n));
-    }
-    if (value && typeof value === 'object') {
-      const nested = value.count ?? value.value ?? value.total;
-      return toCount(nested);
-    }
-    return 0;
-  };
   const pick = (...keys) => {
     for (const c of candidates) {
       for (const k of keys) {
         const v = c?.[k];
-        const n = toCount(v);
+        const n = parseCountValue(v);
         if (n > 0) return n;
       }
     }
