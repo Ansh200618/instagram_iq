@@ -826,18 +826,28 @@ async function fetchInstagramData(targetUsername) {
 
   const postsJson = await postsRes.json();
 
-  // Handle explicit API-level errors
-  if (postsJson.error || postsJson.message) {
-    throw new Error(postsJson.error || postsJson.message || 'Unknown API error. Check the username and retry.');
-  }
+  // Handle explicit API-level errors (avoid treating generic success messages as failures)
+  const apiError = getInstagramApiError(postsJson);
+  if (apiError) throw new Error(apiError);
 
   // Normalise the response — different versions of this API nest data differently
-  const root    = postsJson.data || postsJson;
-  const items   = root.items || root.posts || root.media || [];
-  const userRaw = root.user || (items.length > 0 ? items[0].user : null) || {};
+  const root = postsJson?.data && typeof postsJson.data === 'object' ? postsJson.data : postsJson;
+  const items = Array.isArray(root?.items) ? root.items
+    : Array.isArray(root?.posts) ? root.posts
+    : Array.isArray(root?.media) ? root.media
+    : Array.isArray(postsJson?.items) ? postsJson.items
+    : [];
+  const userRaw = root?.user
+    || root?.owner
+    || root?.profile
+    || root?.account
+    || postsJson?.user
+    || postsJson?.profile
+    || (items.length > 0 ? (items[0].user || items[0].owner || items[0].profile) : null)
+    || {};
 
   if (!userRaw || (!userRaw.username && !userRaw.pk)) {
-    throw new Error(`No data found for @${safeUsername}. The account may be private, suspended, or the username may be misspelled.`);
+    throw new Error(`Could not read profile data for @${safeUsername}. Please verify the username and try again (this can also happen with private/restricted accounts or temporary API limits).`);
   }
 
   // Build a unified profile object from however the API returns it
@@ -1000,6 +1010,22 @@ async function fetchInstagramData(targetUsername) {
     insights,
     hashtags
   };
+}
+
+function getInstagramApiError(payload){
+  if(!payload || typeof payload !== 'object') return 'Instagram API returned an invalid response. Please retry.';
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  const error = typeof payload.error === 'string' ? payload.error.trim() : '';
+  const status = String(payload.status || payload.state || '').toLowerCase();
+  const hasData = !!(
+    payload.data || payload.items || payload.posts || payload.media || payload.user ||
+    (payload.data && typeof payload.data === 'object' && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
+  );
+
+  if(error) return error;
+  if(['error','failed','fail'].includes(status) && message) return message;
+  if(!hasData && message && /(private|not found|invalid|suspend|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message)) return message;
+  return '';
 }
 
 // ── Niche Data (UI specific) ──
