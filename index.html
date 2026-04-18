@@ -906,7 +906,9 @@ async function fetchInstagramData(targetUsername) {
     if (rawType === 2   || rawType === 'VIDEO')          mediaType = 'VIDEO';
     else if (rawType === 8 || rawType === 'CAROUSEL_ALBUM' || rawType === 'GraphSidecar') mediaType = 'CAROUSEL_ALBUM';
     else if (rawType === 'GraphVideo') mediaType = 'VIDEO';
+    else if (rawType === 'GraphImage') mediaType = 'IMAGE';
 
+    // Some API versions use `shortcode`, others use legacy `code`.
     const permalink = post?.permalink
       || (post?.shortcode ? `https://www.instagram.com/p/${post.shortcode}/` : null)
       || (post?.code ? `https://www.instagram.com/p/${post.code}/` : null)
