@@ -888,15 +888,20 @@ async function fetchInstagramData(targetUsername) {
 
   // Map raw items → normalised media array
   bd.media.data = items.slice(0, 20).map(m => {
-    const source = m?.node && typeof m.node === 'object' ? m.node : m;
+    const source = m?.node && typeof m.node === 'object' && !Array.isArray(m.node) ? m.node : m;
     // Caption can be a string or an object {text: "..."}
     const captionText = typeof source?.caption === 'string' ? source.caption : (source?.caption?.text || '');
     // media_type: RapidAPI uses 1=photo, 2=video, 8=carousel OR strings 'IMAGE','VIDEO','CAROUSEL_ALBUM'
     let mediaType = 'IMAGE';
+    // GraphQL-style responses expose type in `__typename` (e.g. GraphVideo, GraphSidecar).
     const rawType = source?.media_type || source?.__typename;
     if (rawType === 2   || rawType === 'VIDEO')          mediaType = 'VIDEO';
     else if (rawType === 8 || rawType === 'CAROUSEL_ALBUM' || rawType === 'GraphSidecar') mediaType = 'CAROUSEL_ALBUM';
     else if (rawType === 'GraphVideo') mediaType = 'VIDEO';
+
+    const permalink = source?.permalink
+      || (source?.shortcode ? `https://www.instagram.com/p/${source.shortcode}/` : '')
+      || (source?.code ? `https://www.instagram.com/p/${source.code}/` : '');
 
     return {
       id:             source?.id || source?.pk || '',
@@ -904,7 +909,7 @@ async function fetchInstagramData(targetUsername) {
       media_type:     mediaType,
       like_count:     source?.like_count || source?.likes?.count || source?.edge_media_preview_like?.count || 0,
       comments_count: source?.comment_count || source?.comments_count || source?.edge_media_to_comment?.count || 0,
-      permalink:      source?.permalink || (source?.shortcode ? `https://www.instagram.com/p/${source.shortcode}/` : (source?.code ? `https://www.instagram.com/p/${source.code}/` : '')),
+      permalink,
       timestamp:      source?.taken_at || source?.taken_at_timestamp || source?.timestamp || 0
     };
   });
