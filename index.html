@@ -818,11 +818,22 @@ async function fetchInstagramData(targetUsername) {
 
   // Normalise the response — different versions of this API nest data differently
   const root = postsJson?.data && typeof postsJson.data === 'object' && !Array.isArray(postsJson.data) ? postsJson.data : postsJson;
-  const items = Array.isArray(root?.items) ? root.items
-    : Array.isArray(root?.posts) ? root.posts
-    : Array.isArray(root?.media) ? root.media
-    : Array.isArray(postsJson?.items) ? postsJson.items
-    : [];
+  const edgeItems = Array.isArray(root?.result?.edges)
+    ? root.result.edges
+    : (Array.isArray(postsJson?.result?.edges) ? postsJson.result.edges : null);
+
+  let items = [];
+  if (edgeItems) {
+    items = edgeItems
+      .map(edge => edge?.node)
+      .filter(node => node && typeof node === 'object' && !Array.isArray(node));
+  } else {
+    items = Array.isArray(root?.items) ? root.items
+      : Array.isArray(root?.posts) ? root.posts
+      : Array.isArray(root?.media) ? root.media
+      : Array.isArray(postsJson?.items) ? postsJson.items
+      : [];
+  }
   const userRaw = root?.user
     || root?.owner
     || root?.profile
@@ -885,23 +896,32 @@ async function fetchInstagramData(targetUsername) {
   };
 
   // Map raw items → normalised media array
-  bd.media.data = items.slice(0, 20).map(m => {
+  bd.media.data = items.slice(0, 20).map(post => {
     // Caption can be a string or an object {text: "..."}
-    const captionText = typeof m.caption === 'string' ? m.caption : (m.caption?.text || '');
+    const captionText = typeof post?.caption === 'string' ? post.caption : (post?.caption?.text || '');
     // media_type: RapidAPI uses 1=photo, 2=video, 8=carousel OR strings 'IMAGE','VIDEO','CAROUSEL_ALBUM'
     let mediaType = 'IMAGE';
-    const rawType = m.media_type;
+    // GraphQL-style responses expose type in `__typename` (e.g. GraphVideo, GraphSidecar).
+    const rawType = post?.media_type || post?.__typename;
     if (rawType === 2   || rawType === 'VIDEO')          mediaType = 'VIDEO';
-    else if (rawType === 8 || rawType === 'CAROUSEL_ALBUM') mediaType = 'CAROUSEL_ALBUM';
+    else if (rawType === 8 || rawType === 'CAROUSEL_ALBUM' || rawType === 'GraphSidecar') mediaType = 'CAROUSEL_ALBUM';
+    else if (rawType === 'GraphVideo') mediaType = 'VIDEO';
+    else if (rawType === 'GraphImage') mediaType = 'IMAGE';
+
+    // Some API versions use `shortcode`, others use legacy `code`.
+    const permalink = post?.permalink
+      || (post?.shortcode ? `https://www.instagram.com/p/${post.shortcode}/` : null)
+      || (post?.code ? `https://www.instagram.com/p/${post.code}/` : null)
+      || '';
 
     return {
-      id:             m.id || m.pk || '',
+      id:             post?.id || post?.pk || '',
       caption:        captionText,
       media_type:     mediaType,
-      like_count:     m.like_count      || m.likes?.count || 0,
-      comments_count: m.comment_count   || m.comments_count || 0,
-      permalink:      m.permalink       || (m.code ? `https://www.instagram.com/p/${m.code}/` : ''),
-      timestamp:      m.taken_at        || m.timestamp || 0
+      like_count:     post?.like_count || post?.likes?.count || post?.edge_media_preview_like?.count || 0,
+      comments_count: post?.comment_count || post?.comments_count || post?.edge_media_to_comment?.count || 0,
+      permalink,
+      timestamp:      post?.taken_at || post?.taken_at_timestamp || post?.timestamp || 0
     };
   });
 
@@ -1132,8 +1152,8 @@ function getInstagramApiError(payload) {
   const status = String(payload.status || payload.state || '').toLowerCase();
   const hasDataInObject = payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data);
   const hasData = !!(
-    payload.data || payload.items || payload.posts || payload.media || payload.user ||
-    (hasDataInObject && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user))
+    payload.data || payload.items || payload.posts || payload.media || payload.user || payload.result?.edges ||
+    (hasDataInObject && (payload.data.items || payload.data.posts || payload.data.media || payload.data.user || payload.data.result?.edges))
   );
   const matchesFailurePattern = /(private|not found|invalid|suspend(?:ed)?|challenge|login|required|rate limit|forbidden|cannot|restricted)/i.test(message);
 
