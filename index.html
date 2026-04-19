@@ -832,11 +832,22 @@ function parseCountValue(value){
   if (typeof value === 'string') {
     const cleaned = value.replace(/,/g, '').trim();
     if (!cleaned) return 0;
-    const n = Number(cleaned);
-    if (Number.isFinite(n)) return Math.max(0, Math.round(n));
+    const compact = cleaned.toLowerCase().replace(/\s+/g, '');
+    const shortMatch = compact.match(/^(\d+(?:\.\d+)?)([kmb])$/);
+    if (shortMatch) {
+      const base = Number(shortMatch[1]);
+      const suffix = shortMatch[2].toLowerCase();
+      const mult = suffix === 'k' ? 1e3 : (suffix === 'm' ? 1e6 : 1e9);
+      if (Number.isFinite(base)) return Math.max(0, Math.round(base * mult));
+    }
+    const plainMatch = compact.match(/\d+(?:\.\d+)?/);
+    if (plainMatch) {
+      const n = Number(plainMatch[0]);
+      if (Number.isFinite(n)) return Math.max(0, Math.round(n));
+    }
   }
   if (value && typeof value === 'object') {
-    const nested = value.count ?? value.value ?? value.total;
+    const nested = value.count ?? value.value ?? value.total ?? value.followers ?? value.following ?? value.media;
     return parseCountValue(nested);
   }
   return 0;
@@ -922,9 +933,9 @@ async function tryInstagramStatsAPI(username) {
     return {
       username: profile.username || username,
       name: profile.full_name || profile.name || username,
-      followers_count: parseCountValue(profile.follower_count || profile.followers || profile.followers_count),
-      follows_count: parseCountValue(profile.following_count || profile.following || profile.follows_count),
-      media_count: parseCountValue(profile.media_count || profile.posts_count),
+      followers_count: parseCountValue(profile.follower_count || profile.followers || profile.followers_count || profile.followerCount),
+      follows_count: parseCountValue(profile.following_count || profile.following || profile.follows_count || profile.followingCount),
+      media_count: parseCountValue(profile.media_count || profile.posts_count || profile.mediaCount || profile.post_count),
       profile_picture_url: parseUrlValue(profile.profile_pic_url || profile.profile_picture_url || profile.profile_pic),
       biography: profile.biography || profile.bio || '',
       is_verified: profile.is_verified || false,
@@ -954,9 +965,9 @@ async function tryInstagramLooterAPI(username) {
     return {
       username: exactMatch.username || username,
       name: exactMatch.full_name || exactMatch.name || username,
-      followers_count: parseCountValue(exactMatch.follower_count || exactMatch.followers),
-      follows_count: parseCountValue(exactMatch.following_count || exactMatch.following),
-      media_count: parseCountValue(exactMatch.media_count || exactMatch.posts),
+      followers_count: parseCountValue(exactMatch.follower_count || exactMatch.followers || exactMatch.followers_count || exactMatch.followerCount),
+      follows_count: parseCountValue(exactMatch.following_count || exactMatch.following || exactMatch.follows_count || exactMatch.followingCount),
+      media_count: parseCountValue(exactMatch.media_count || exactMatch.posts || exactMatch.posts_count || exactMatch.mediaCount),
       profile_picture_url: parseUrlValue(exactMatch.profile_pic_url || exactMatch.profile_picture),
       biography: exactMatch.biography || exactMatch.bio || '',
       is_verified: exactMatch.is_verified || false,
@@ -1082,7 +1093,11 @@ async function fetchViaInstagram120(safeUsername) {
   const rootStats = extractProfileStats(root, postsJson);
 
   // Some endpoint variants return profile data only via dedicated profile/userInfo routes
-  if (!userRaw || (!userRaw.username && !userRaw.pk)) {
+  const rootFollowerData = parseCountValue(userRaw.follower_count) || parseCountValue(userRaw.followers_count) || parseCountValue(userRaw.followerCount) || parseCountValue(userRaw.edge_followed_by?.count) || rootStats.followers_count;
+  const rootFollowingData = parseCountValue(userRaw.following_count) || parseCountValue(userRaw.follows_count) || parseCountValue(userRaw.followingCount) || parseCountValue(userRaw.edge_follow?.count) || rootStats.follows_count;
+  const rootMediaData = parseCountValue(userRaw.media_count) || parseCountValue(userRaw.mediaCount) || parseCountValue(userRaw.edge_owner_to_timeline_media?.count) || rootStats.media_count || items.length;
+  const shouldHydrateProfile = (!userRaw || (!userRaw.username && !userRaw.pk)) || (!rootFollowerData && !rootFollowingData && !rootMediaData);
+  if (shouldHydrateProfile) {
     const profileJson = await fetchInstagramFromCandidates(
       ['/profile', '/userInfo', '/api/instagram/profile', '/api/instagram/userInfo'],
       { username: safeUsername },
@@ -1090,20 +1105,33 @@ async function fetchViaInstagram120(safeUsername) {
     );
     const profileRoot = profileJson?.data && typeof profileJson.data === 'object' && !Array.isArray(profileJson.data) ? profileJson.data : profileJson;
     const profileUser = profileRoot?.user || profileRoot?.profile || profileRoot?.account || profileJson?.user || profileJson?.profile || {};
+    const profileStats = extractProfileStats(profileRoot, profileJson);
     if (profileUser && (profileUser.username || profileUser.pk)) {
       userRaw.username = userRaw.username || profileUser.username;
       userRaw.pk = userRaw.pk || profileUser.pk;
       userRaw.full_name = userRaw.full_name || profileUser.full_name || profileUser.name;
       userRaw.name = userRaw.name || profileUser.name;
-      userRaw.follower_count = userRaw.follower_count || profileUser.follower_count || profileUser.followers_count;
-      userRaw.followers_count = userRaw.followers_count || profileUser.followers_count || profileUser.follower_count;
-      userRaw.following_count = userRaw.following_count || profileUser.following_count || profileUser.follows_count;
-      userRaw.follows_count = userRaw.follows_count || profileUser.follows_count || profileUser.following_count;
-      userRaw.media_count = userRaw.media_count || profileUser.media_count;
+      userRaw.follower_count = userRaw.follower_count || profileUser.follower_count || profileUser.followers_count || profileUser.followerCount || profileStats.followers_count;
+      userRaw.followers_count = userRaw.followers_count || profileUser.followers_count || profileUser.follower_count || profileUser.followerCount || profileStats.followers_count;
+      userRaw.following_count = userRaw.following_count || profileUser.following_count || profileUser.follows_count || profileUser.followingCount || profileStats.follows_count;
+      userRaw.follows_count = userRaw.follows_count || profileUser.follows_count || profileUser.following_count || profileUser.followingCount || profileStats.follows_count;
+      userRaw.media_count = userRaw.media_count || profileUser.media_count || profileUser.mediaCount || profileStats.media_count;
       userRaw.profile_pic_url = userRaw.profile_pic_url || profileUser.profile_pic_url || profileUser.profile_picture_url;
       userRaw.profile_picture_url = userRaw.profile_picture_url || profileUser.profile_picture_url || profileUser.profile_pic_url;
     }
+    userRaw.follower_count = userRaw.follower_count || profileStats.followers_count;
+    userRaw.following_count = userRaw.following_count || profileStats.follows_count;
+    userRaw.media_count = userRaw.media_count || profileStats.media_count;
+    userRaw.profile_picture_url = userRaw.profile_picture_url || profileStats.profile_picture_url;
   }
+
+  // Always use root-level stats as a fallback for sparse user objects.
+  userRaw.follower_count = userRaw.follower_count || rootStats.followers_count;
+  userRaw.followers_count = userRaw.followers_count || rootStats.followers_count;
+  userRaw.following_count = userRaw.following_count || rootStats.follows_count;
+  userRaw.follows_count = userRaw.follows_count || rootStats.follows_count;
+  userRaw.media_count = userRaw.media_count || rootStats.media_count;
+  userRaw.profile_picture_url = userRaw.profile_picture_url || rootStats.profile_picture_url;
 
   // Some API variants return counts without a full user object; keep analysis usable in that case.
   if ((!userRaw.username && !userRaw.pk) && (items.length > 0 || rootStats.hasData)) {
@@ -1130,9 +1158,9 @@ async function fetchViaInstagram120(safeUsername) {
   const bd = {
     username:            userRaw.username || safeUsername,
     name:                userRaw.full_name || userRaw.name || userRaw.username || safeUsername,
-    followers_count:     parseCountValue(userRaw.follower_count) || parseCountValue(userRaw.followers_count) || parseCountValue(userRaw.edge_followed_by?.count) || 0,
-    follows_count:       parseCountValue(userRaw.following_count) || parseCountValue(userRaw.follows_count) || parseCountValue(userRaw.edge_follow?.count) || 0,
-    media_count:         parseCountValue(userRaw.media_count) || parseCountValue(userRaw.edge_owner_to_timeline_media?.count) || items.length,
+    followers_count:     parseCountValue(userRaw.follower_count) || parseCountValue(userRaw.followers_count) || parseCountValue(userRaw.followerCount) || parseCountValue(userRaw.edge_followed_by?.count) || rootStats.followers_count || 0,
+    follows_count:       parseCountValue(userRaw.following_count) || parseCountValue(userRaw.follows_count) || parseCountValue(userRaw.followingCount) || parseCountValue(userRaw.edge_follow?.count) || rootStats.follows_count || 0,
+    media_count:         parseCountValue(userRaw.media_count) || parseCountValue(userRaw.mediaCount) || parseCountValue(userRaw.edge_owner_to_timeline_media?.count) || rootStats.media_count || items.length,
     profile_picture_url: profilePictureUrl,
     media: { data: [] }
   };
@@ -1517,17 +1545,17 @@ function extractProfileStats(...sources) {
 
   const followers_count = pick(
     'follower_count', 'followers_count', 'followers', 'subscriber_count',
-    'edge_followed_by_count', 'edge_followed_by'
+    'followerCount', 'followersCount', 'edge_followed_by_count', 'edge_followed_by'
   );
   const follows_count = pick(
     'following_count', 'follows_count', 'following', 'follow_count',
-    'edge_follow_count', 'edge_follow'
+    'followingCount', 'followsCount', 'edge_follow_count', 'edge_follow'
   );
   const media_count = pick(
-    'media_count', 'posts_count', 'post_count', 'total_posts', 'total_media'
+    'media_count', 'posts_count', 'post_count', 'total_posts', 'total_media', 'mediaCount', 'postCount'
   );
   const profile_picture_url = pickString(
-    'profile_pic_url', 'profile_picture_url', 'avatar', 'avatar_url', 'hd_profile_pic_url_info'
+    'profile_pic_url', 'profile_picture_url', 'avatar', 'avatar_url', 'profilePicUrl', 'hd_profile_pic_url_info'
   );
 
   return {
