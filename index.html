@@ -719,7 +719,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
         <span style="font-size:20px">📸</span> Continue with Instagram
       </button>
       <div class="dev-note">
-        <strong>✅ Live RapidAPI:</strong> Clicking "Continue with Instagram" pulls live profile data directly via the Instagram120 API. You will be prompted for your Instagram username.
+        <strong>✅ Live Multi-API System:</strong> Clicking "Continue with Instagram" pulls live profile data using 3 RapidAPIs (Instagram120, Instagram Statistics, Instagram Looter) with automatic fallback for maximum reliability. You will be prompted for your Instagram username.
       </div>
       <p class="modal-note" style="margin-top:10px">Enter any public Instagram username when prompted to connect as owner</p>
       <p class="modal-note">Owner mode unlocks the AI recommendation wizard, content calendar, and health audit</p>
@@ -755,7 +755,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
   </div>
 </div>
 
-<footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by Instagram120 RapidAPI</footer>
+<footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by 3 RapidAPIs</footer>
 
 <script>
 /* ═══════════════════════════════════════════════════
@@ -764,8 +764,37 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
    ═══════════════════════════════════════════════════ */
 
 // ── RapidAPI Configuration ──
+// Your single RapidAPI key works across all three services
 const RAPIDAPI_KEY  = 'd3580be2a0msha1bc8c38eec29d5p145a84jsn35cffc4e70f8';
-const RAPIDAPI_HOST = 'instagram120.p.rapidapi.com';
+
+// Three different Instagram APIs for comprehensive coverage
+const API_CONFIGS = {
+  instagram120: {
+    host: 'instagram120.p.rapidapi.com',
+    priority: 1,
+    endpoints: {
+      profile: ['/profile', '/userInfo', '/api/instagram/profile'],
+      posts: ['/posts', '/api/instagram/posts']
+    }
+  },
+  instagramStats: {
+    host: 'instagram-statistics-api.p.rapidapi.com',
+    priority: 2,
+    endpoints: {
+      profile: ['/profile']
+    }
+  },
+  instagramLooter: {
+    host: 'instagram-looter2.p.rapidapi.com',
+    priority: 3,
+    endpoints: {
+      search: ['/search']
+    }
+  }
+};
+
+// Legacy constant for backward compatibility
+const RAPIDAPI_HOST = API_CONFIGS.instagram120.host;
 
 // ── Owner / Gemini config (localStorage only) ──
 const APP_CONFIG_KEY = 'gramiq-config';
@@ -826,12 +855,196 @@ function parseUrlValue(value){
 function getGemKey(){return appConfig.geminiKey||''}
 
 /* ══════════════════════════════════════
-   RAPIDAPI INSTAGRAM ENGINE
-   Fetches live data for ANY Instagram account
-   via instagram120.p.rapidapi.com
+   MULTI-API INSTAGRAM ENGINE
+   Fetches live data from THREE RapidAPIs:
+   1. Instagram120 (primary)
+   2. Instagram Statistics API (fallback)
+   3. Instagram Looter (search/discovery)
+   ══════════════════════════════════════ */
+
+// Helper: Call a specific API with proper error handling
+async function callRapidAPI(apiName, endpoint, params = {}) {
+  const config = API_CONFIGS[apiName];
+  if (!config) throw new Error(`Unknown API: ${apiName}`);
+
+  const url = `https://${config.host}${endpoint}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-rapidapi-host': config.host,
+    'x-rapidapi-key': RAPIDAPI_KEY
+  };
+
+  // Instagram Statistics API uses query params for some endpoints
+  if (apiName === 'instagramStats' && endpoint.includes('/profile')) {
+    const username = params.username || params.url;
+    const urlWithParams = `${url}?url=${encodeURIComponent(username)}`;
+    const res = await fetch(urlWithParams, {
+      method: 'GET',
+      headers
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // Instagram Looter uses GET for search
+  if (apiName === 'instagramLooter' && endpoint.includes('/search')) {
+    const query = params.query || params.username;
+    const urlWithParams = `${url}?query=${encodeURIComponent(query)}`;
+    const res = await fetch(urlWithParams, {
+      method: 'GET',
+      headers
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // Default: POST with JSON body (Instagram120)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params)
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+// Try to fetch profile from Instagram Statistics API
+async function tryInstagramStatsAPI(username) {
+  try {
+    console.log(`[API] Trying Instagram Statistics API for @${username}`);
+    const data = await callRapidAPI('instagramStats', '/profile', { url: username });
+    
+    // Extract profile data (this API returns different structure)
+    const profile = data?.data || data;
+    if (!profile || !profile.username) return null;
+
+    return {
+      username: profile.username || username,
+      name: profile.full_name || profile.name || username,
+      followers_count: parseCountValue(profile.follower_count || profile.followers || profile.followers_count),
+      follows_count: parseCountValue(profile.following_count || profile.following || profile.follows_count),
+      media_count: parseCountValue(profile.media_count || profile.posts_count),
+      profile_picture_url: parseUrlValue(profile.profile_pic_url || profile.profile_picture_url || profile.profile_pic),
+      biography: profile.biography || profile.bio || '',
+      is_verified: profile.is_verified || false,
+      is_private: profile.is_private || false,
+      _source: 'instagramStats'
+    };
+  } catch (error) {
+    console.warn(`[API] Instagram Statistics API failed:`, error.message);
+    return null;
+  }
+}
+
+// Try to fetch profile from Instagram Looter API (search-based)
+async function tryInstagramLooterAPI(username) {
+  try {
+    console.log(`[API] Trying Instagram Looter API for @${username}`);
+    const data = await callRapidAPI('instagramLooter', '/search', { query: username });
+    
+    // This API returns search results - find exact match
+    const results = data?.results || data?.data || [];
+    const exactMatch = results.find(r => 
+      (r.username || '').toLowerCase() === username.toLowerCase()
+    );
+
+    if (!exactMatch) return null;
+
+    return {
+      username: exactMatch.username || username,
+      name: exactMatch.full_name || exactMatch.name || username,
+      followers_count: parseCountValue(exactMatch.follower_count || exactMatch.followers),
+      follows_count: parseCountValue(exactMatch.following_count || exactMatch.following),
+      media_count: parseCountValue(exactMatch.media_count || exactMatch.posts),
+      profile_picture_url: parseUrlValue(exactMatch.profile_pic_url || exactMatch.profile_picture),
+      biography: exactMatch.biography || exactMatch.bio || '',
+      is_verified: exactMatch.is_verified || false,
+      is_private: exactMatch.is_private || false,
+      _source: 'instagramLooter'
+    };
+  } catch (error) {
+    console.warn(`[API] Instagram Looter API failed:`, error.message);
+    return null;
+  }
+}
+
+/* ══════════════════════════════════════
+   MAIN FETCH FUNCTION WITH MULTI-API FALLBACK
    ══════════════════════════════════════ */
 async function fetchInstagramData(targetUsername) {
   const safeUsername = normalizeInstagramUsername(targetUsername);
+  console.log(`[API] Fetching data for @${safeUsername} using multi-API strategy`);
+
+  let profileData = null;
+  let postsData = null;
+  let errors = [];
+
+  // STRATEGY 1: Try Instagram120 (primary) - can get both profile and posts
+  try {
+    console.log(`[API] Strategy 1: Instagram120 API (primary)`);
+    const result = await fetchViaInstagram120(safeUsername);
+    if (result) {
+      console.log(`[API] ✓ Success with Instagram120 API`);
+      return result;
+    }
+  } catch (error) {
+    errors.push(`Instagram120: ${error.message}`);
+    console.warn(`[API] Instagram120 failed:`, error.message);
+  }
+
+  // STRATEGY 2: Try Instagram Statistics API (fallback for profile data)
+  try {
+    console.log(`[API] Strategy 2: Instagram Statistics API (fallback)`);
+    profileData = await tryInstagramStatsAPI(safeUsername);
+    if (profileData) {
+      console.log(`[API] ✓ Got profile from Instagram Statistics API`);
+    }
+  } catch (error) {
+    errors.push(`InstagramStats: ${error.message}`);
+  }
+
+  // STRATEGY 3: Try Instagram Looter API (additional fallback)
+  if (!profileData) {
+    try {
+      console.log(`[API] Strategy 3: Instagram Looter API (search fallback)`);
+      profileData = await tryInstagramLooterAPI(safeUsername);
+      if (profileData) {
+        console.log(`[API] ✓ Got profile from Instagram Looter API`);
+      }
+    } catch (error) {
+      errors.push(`InstagramLooter: ${error.message}`);
+    }
+  }
+
+  // If we got profile data from fallback APIs, build response
+  if (profileData) {
+    console.log(`[API] Building response from ${profileData._source}`);
+    const bd = {
+      username: profileData.username || safeUsername,
+      name: profileData.name || safeUsername,
+      followers_count: profileData.followers_count || 0,
+      follows_count: profileData.follows_count || 0,
+      media_count: profileData.media_count || 0,
+      profile_picture_url: profileData.profile_picture_url || '',
+      biography: profileData.biography || '',
+      is_verified: profileData.is_verified || false,
+      is_private: profileData.is_private || false,
+      media: { data: [] },
+      _apiSource: profileData._source
+    };
+
+    // Build analytics even with limited data
+    return buildAnalyticsResponse(bd, safeUsername);
+  }
+
+  // All APIs failed
+  const errorMsg = `Could not fetch data for @${safeUsername}. All APIs failed:\n${errors.join('\n')}`;
+  throw new Error(errorMsg);
+}
+
+// Original Instagram120 fetch logic (extracted as separate function)
+async function fetchViaInstagram120(safeUsername) {
 
   // ── Fetch posts (try both old and new endpoint shapes) ──
   const postsJson = await fetchInstagramFromCandidates(
@@ -1172,6 +1385,101 @@ async function fetchInstagramData(targetUsername) {
   };
 }
 
+// Helper function to build analytics response from fallback API data (when posts unavailable)
+function buildAnalyticsResponse(bd, safeUsername) {
+  const followers = bd.followers_count || 0;
+  const following = bd.follows_count || 0;
+  const posts = bd.media_count || 0;
+
+  // When we don't have post data, estimate based on industry standards
+  const estimatedAvgEr = 2.5; // Industry average
+  const niche = detectNicheFromBio(bd.biography || bd.name || '');
+  
+  // Create minimal insights
+  const insights = [
+    {
+      title: `Profile Data via ${bd._apiSource || 'API'}`,
+      summary: 'Basic profile information retrieved. Post analytics unavailable.',
+      impact: 'Limited Data',
+      support: bd._apiSource || 'Fallback API'
+    }
+  ];
+
+  if (bd.is_verified) {
+    insights.push({
+      title: 'Verified Account',
+      summary: 'This is an officially verified Instagram account.',
+      impact: 'High Trust',
+      support: 'Verified Badge'
+    });
+  }
+
+  if (bd.is_private) {
+    insights.push({
+      title: 'Private Account',
+      summary: 'This account is private. Detailed post analytics cannot be retrieved.',
+      impact: 'Limited Visibility',
+      support: 'Privacy Settings'
+    });
+  }
+
+  // Estimate viral score based on follower count and account properties
+  const followerTier = followers < 1000 ? 30 : followers < 10000 ? 50 : followers < 100000 ? 70 : 85;
+  const viralScore = bd.is_verified ? Math.min(95, followerTier + 10) : followerTier;
+
+  // Simple timeline with estimated data
+  const labels = ['Est. 1', 'Est. 2', 'Est. 3', 'Est. 4', 'Est. 5', 'Est. 6'];
+  const engData = Array(6).fill(estimatedAvgEr);
+  const postData = Array(6).fill(Math.round(posts / 6) || 1);
+  const reachData = Array(6).fill(Math.round(followers * 0.3)); // ~30% reach estimate
+
+  return {
+    username: '@' + (bd.username || safeUsername),
+    displayName: bd.name || bd.username || safeUsername,
+    niche: niche.name,
+    confidence: niche.confidence,
+    followers,
+    following,
+    posts,
+    engRate: estimatedAvgEr,
+    growthMoM: 0,
+    viralScore,
+    avatarColor: (() => {
+      const palette = ['#f72585','#7209b7','#4361ee','#fb5607','#06d6a0'];
+      const seed = Array.from(String(bd.username || safeUsername || '')).reduce((acc, character) => acc + character.charCodeAt(0), 0);
+      return palette[seed % palette.length];
+    })(),
+    profilePicture: bd.profile_picture_url || '',
+    labels,
+    engData,
+    postData,
+    reachData,
+    contentMix: { Reels: 33, Carousels: 33, Photos: 34 }, // Estimated mix
+    radarScores: [50, Math.min(100, Math.round(posts / 10)), 60, 80, viralScore, 75],
+    recentPosts: [],
+    insights,
+    hashtags: [],
+    dataConfidence: 0.4, // Lower confidence for estimated data
+    _isEstimated: true
+  };
+}
+
+// Detect niche from biography text
+function detectNicheFromBio(text) {
+  const lower = text.toLowerCase();
+  if (lower.includes('fitness') || lower.includes('workout') || lower.includes('gym')) return { name: 'Fitness', confidence: 88 };
+  if (lower.includes('food') || lower.includes('recipe') || lower.includes('chef')) return { name: 'Food', confidence: 85 };
+  if (lower.includes('travel') || lower.includes('explorer') || lower.includes('wanderlust')) return { name: 'Travel', confidence: 87 };
+  if (lower.includes('tech') || lower.includes('developer') || lower.includes('coding')) return { name: 'Tech', confidence: 82 };
+  if (lower.includes('business') || lower.includes('entrepreneur') || lower.includes('ceo')) return { name: 'Business', confidence: 86 };
+  if (lower.includes('artist') || lower.includes('design') || lower.includes('creative')) return { name: 'Art & Creative', confidence: 90 };
+  if (lower.includes('fashion') || lower.includes('style') || lower.includes('model')) return { name: 'Fashion', confidence: 89 };
+  if (lower.includes('music') || lower.includes('singer') || lower.includes('musician')) return { name: 'Music', confidence: 91 };
+  if (lower.includes('comedy') || lower.includes('comedian') || lower.includes('funny')) return { name: 'Comedy', confidence: 84 };
+  if (lower.includes('sports') || lower.includes('athlete') || lower.includes('player')) return { name: 'Sports', confidence: 92 };
+  return { name: 'Lifestyle', confidence: 70 };
+}
+
 function extractProfileStats(...sources) {
   const candidates = [];
   sources.filter(Boolean).forEach(src => {
@@ -1384,7 +1692,9 @@ function renderDashboard(d){
   }
 
   document.getElementById('profileName').textContent=d.displayName.toUpperCase();
-  document.getElementById('profileSub').textContent=`${d.username}  ·  ${fmtNum(d.followers)} followers  ·  ${fmtNum(d.posts)} posts  ·  ${d.niche}`;
+  const apiSourceBadge = d._apiSource ? ` <span style="font-size:10px;padding:2px 8px;border-radius:12px;background:var(--purple-dim);color:var(--purple);border:1px solid rgba(114,9,183,0.3);font-family:'DM Mono',monospace;letter-spacing:0.5px;margin-left:8px">API: ${d._apiSource}</span>` : '';
+  const estimatedBadge = d._isEstimated ? ` <span style="font-size:10px;padding:2px 8px;border-radius:12px;background:var(--orange-dim);color:var(--orange);border:1px solid rgba(251,86,7,0.3);font-family:'DM Mono',monospace;letter-spacing:0.5px;margin-left:8px">ESTIMATED</span>` : '';
+  document.getElementById('profileSub').innerHTML=`${d.username}  ·  ${fmtNum(d.followers)} followers  ·  ${fmtNum(d.posts)} posts  ·  ${d.niche}${apiSourceBadge}${estimatedBadge}`;
 
   // Badges
   document.getElementById('verifiedBadge').className='verified-badge'+(isOwner?' show':'');
