@@ -833,14 +833,14 @@ function parseCountValue(value){
     const cleaned = value.replace(/,/g, '').trim();
     if (!cleaned) return 0;
     const compact = cleaned.toLowerCase().replace(/\s+/g, '');
-    const shortMatch = compact.match(/^(-?\d+(?:\.\d+)?)([kmb])$/i);
+    const shortMatch = compact.match(/^(\d+(?:\.\d+)?)([kmb])$/i);
     if (shortMatch) {
       const base = Number(shortMatch[1]);
       const suffix = shortMatch[2].toLowerCase();
       const mult = suffix === 'k' ? 1e3 : (suffix === 'm' ? 1e6 : 1e9);
       if (Number.isFinite(base)) return Math.max(0, Math.round(base * mult));
     }
-    const plainMatch = compact.match(/-?\d+(?:\.\d+)?/);
+    const plainMatch = compact.match(/\d+(?:\.\d+)?/);
     if (plainMatch) {
       const n = Number(plainMatch[0]);
       if (Number.isFinite(n)) return Math.max(0, Math.round(n));
