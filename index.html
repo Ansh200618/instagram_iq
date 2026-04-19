@@ -755,7 +755,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
   </div>
 </div>
 
-<footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by 3 RapidAPIs</footer>
+<footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by 4 RapidAPIs</footer>
 
 <script>
 /* ═══════════════════════════════════════════════════
@@ -764,10 +764,10 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
    ═══════════════════════════════════════════════════ */
 
 // ── RapidAPI Configuration ──
-// Your single RapidAPI key works across all three services
+// Your single RapidAPI key works across all configured services
 const RAPIDAPI_KEY  = 'd3580be2a0msha1bc8c38eec29d5p145a84jsn35cffc4e70f8';
 
-// Three different Instagram APIs for comprehensive coverage
+// Four different Instagram APIs for comprehensive coverage
 const API_CONFIGS = {
   instagram120: {
     host: 'instagram120.p.rapidapi.com',
@@ -789,6 +789,13 @@ const API_CONFIGS = {
     priority: 3,
     endpoints: {
       search: ['/search']
+    }
+  },
+  instagramScraperStable: {
+    host: 'instagram-scraper-stable-api.p.rapidapi.com',
+    priority: 4,
+    endpoints: {
+      followersV2: ['/get_ig_user_followers_v2.php']
     }
   }
 };
@@ -867,10 +874,11 @@ function getGemKey(){return appConfig.geminiKey||''}
 
 /* ══════════════════════════════════════
    MULTI-API INSTAGRAM ENGINE
-   Fetches live data from THREE RapidAPIs:
+   Fetches live data from FOUR RapidAPIs:
    1. Instagram120 (primary)
    2. Instagram Statistics API (fallback)
    3. Instagram Looter (search/discovery)
+   4. Instagram Scraper Stable (counts fallback)
    ══════════════════════════════════════ */
 
 // Helper: Call a specific API with proper error handling
@@ -904,6 +912,26 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
     const res = await fetch(urlWithParams, {
       method: 'GET',
       headers
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // Instagram Scraper Stable API uses form-urlencoded POST
+  if (apiName === 'instagramScraperStable' && endpoint.includes('/get_ig_user_followers_v2.php')) {
+    const formData = new URLSearchParams();
+    formData.set('username_or_url', params.username_or_url || params.username || '');
+    formData.set('data', params.data || 'following');
+    formData.set('amount', String(params.amount ?? 12));
+    formData.set('pagination_token', params.pagination_token || '');
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'x-rapidapi-host': config.host,
+        'x-rapidapi-key': RAPIDAPI_KEY
+      },
+      body: formData.toString()
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
@@ -944,6 +972,67 @@ async function tryInstagramStatsAPI(username) {
     };
   } catch (error) {
     console.warn(`[API] Instagram Statistics API failed:`, error.message);
+    return null;
+  }
+}
+
+function parseScraperCount(payload, kind) {
+  const roots = [payload, payload?.data, payload?.result, payload?.results, payload?.response, payload?.user, payload?.profile, payload?.meta, payload?.stats, payload?.pagination]
+    .filter(Boolean);
+  const specificKeys = kind === 'followers'
+    ? ['followers_count', 'follower_count', 'followers', 'total_followers', 'edge_followed_by']
+    : ['following_count', 'follows_count', 'following', 'total_following', 'edge_follow'];
+  const genericKeys = ['count', 'total_count', 'total', 'value', 'amount'];
+
+  for (const root of roots) {
+    if (!root || typeof root !== 'object') continue;
+    for (const key of [...specificKeys, ...genericKeys]) {
+      const n = parseCountValue(root?.[key]);
+      if (n > 0) return n;
+    }
+  }
+
+  const arrayKeys = [kind, 'users', 'items', 'results', 'data', 'edges', 'list'];
+  for (const root of roots) {
+    if (Array.isArray(root) && root.length > 0) return root.length;
+    if (!root || typeof root !== 'object') continue;
+    for (const key of arrayKeys) {
+      const maybeArr = root?.[key];
+      if (Array.isArray(maybeArr) && maybeArr.length > 0) return maybeArr.length;
+    }
+  }
+
+  return 0;
+}
+
+async function tryInstagramScraperStableCounts(username) {
+  try {
+    console.log(`[API] Trying Instagram Scraper Stable API count fallback for @${username}`);
+    const usernameOrUrl = `https://www.instagram.com/${username}/`;
+    const [followersRes, followingRes] = await Promise.allSettled([
+      callRapidAPI('instagramScraperStable', '/get_ig_user_followers_v2.php', {
+        username_or_url: usernameOrUrl,
+        data: 'followers',
+        amount: 12,
+        pagination_token: ''
+      }),
+      callRapidAPI('instagramScraperStable', '/get_ig_user_followers_v2.php', {
+        username_or_url: usernameOrUrl,
+        data: 'following',
+        amount: 12,
+        pagination_token: ''
+      })
+    ]);
+
+    const followersRaw = followersRes.status === 'fulfilled' ? followersRes.value : null;
+    const followingRaw = followingRes.status === 'fulfilled' ? followingRes.value : null;
+    const followers_count = parseScraperCount(followersRaw, 'followers');
+    const follows_count = parseScraperCount(followingRaw, 'following');
+
+    if (!followers_count && !follows_count) return null;
+    return { followers_count, follows_count, _source: 'instagramScraperStable' };
+  } catch (error) {
+    console.warn(`[API] Instagram Scraper Stable count fallback failed:`, error.message);
     return null;
   }
 }
@@ -1164,6 +1253,16 @@ async function fetchViaInstagram120(safeUsername) {
     profile_picture_url: profilePictureUrl,
     media: { data: [] }
   };
+
+  // Fallback: hydrate missing follower/following counts from dedicated followers endpoint
+  if (!bd.followers_count || !bd.follows_count) {
+    const fallbackCounts = await tryInstagramScraperStableCounts(safeUsername);
+    if (fallbackCounts) {
+      bd.followers_count = bd.followers_count || fallbackCounts.followers_count || 0;
+      bd.follows_count = bd.follows_count || fallbackCounts.follows_count || 0;
+      bd._apiSource = `instagram120 + ${fallbackCounts._source}`;
+    }
+  }
 
   // Map raw items → normalised media array
   bd.media.data = items.slice(0, 20).map(post => {
