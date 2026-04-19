@@ -833,7 +833,7 @@ function parseCountValue(value){
     const cleaned = value.replace(/,/g, '').trim();
     if (!cleaned) return 0;
     const compact = cleaned.toLowerCase().replace(/\s+/g, '');
-    const shortMatch = compact.match(/^(\d+(?:\.\d+)?)([kmb])$/i);
+    const shortMatch = compact.match(/^(\d+(?:\.\d+)?)([kmb])$/);
     if (shortMatch) {
       const base = Number(shortMatch[1]);
       const suffix = shortMatch[2].toLowerCase();
@@ -1093,10 +1093,10 @@ async function fetchViaInstagram120(safeUsername) {
   const rootStats = extractProfileStats(root, postsJson);
 
   // Some endpoint variants return profile data only via dedicated profile/userInfo routes
-  const hasRootFollowerData = parseCountValue(userRaw.follower_count) || parseCountValue(userRaw.followers_count) || parseCountValue(userRaw.followerCount) || parseCountValue(userRaw.edge_followed_by?.count) || rootStats.followers_count;
-  const hasRootFollowingData = parseCountValue(userRaw.following_count) || parseCountValue(userRaw.follows_count) || parseCountValue(userRaw.followingCount) || parseCountValue(userRaw.edge_follow?.count) || rootStats.follows_count;
-  const hasRootMediaData = parseCountValue(userRaw.media_count) || parseCountValue(userRaw.mediaCount) || parseCountValue(userRaw.edge_owner_to_timeline_media?.count) || rootStats.media_count || items.length;
-  const shouldHydrateProfile = (!userRaw || (!userRaw.username && !userRaw.pk)) || (!hasRootFollowerData && !hasRootFollowingData && !hasRootMediaData);
+  const rootFollowerData = parseCountValue(userRaw.follower_count) || parseCountValue(userRaw.followers_count) || parseCountValue(userRaw.followerCount) || parseCountValue(userRaw.edge_followed_by?.count) || rootStats.followers_count;
+  const rootFollowingData = parseCountValue(userRaw.following_count) || parseCountValue(userRaw.follows_count) || parseCountValue(userRaw.followingCount) || parseCountValue(userRaw.edge_follow?.count) || rootStats.follows_count;
+  const rootMediaData = parseCountValue(userRaw.media_count) || parseCountValue(userRaw.mediaCount) || parseCountValue(userRaw.edge_owner_to_timeline_media?.count) || rootStats.media_count || items.length;
+  const shouldHydrateProfile = (!userRaw || (!userRaw.username && !userRaw.pk)) || (!rootFollowerData && !rootFollowingData && !rootMediaData);
   if (shouldHydrateProfile) {
     const profileJson = await fetchInstagramFromCandidates(
       ['/profile', '/userInfo', '/api/instagram/profile', '/api/instagram/userInfo'],
