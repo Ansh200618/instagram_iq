@@ -1008,28 +1008,30 @@ function parseScraperCount(payload, kind) {
 async function tryInstagramScraperStableCounts(username) {
   try {
     console.log(`[API] Trying Instagram Scraper Stable API count fallback for @${username}`);
-    const usernameOrUrl = `https://www.instagram.com/${username}/`;
+    const profileUrl = `https://www.instagram.com/${username}/`;
     const [followersRes, followingRes] = await Promise.allSettled([
       callRapidAPI('instagramScraperStable', '/get_ig_user_followers_v2.php', {
-        username_or_url: usernameOrUrl,
+        username_or_url: profileUrl,
         data: 'followers',
         amount: 12,
         pagination_token: ''
       }),
       callRapidAPI('instagramScraperStable', '/get_ig_user_followers_v2.php', {
-        username_or_url: usernameOrUrl,
+        username_or_url: profileUrl,
         data: 'following',
         amount: 12,
         pagination_token: ''
       })
     ]);
 
-    const followersRaw = followersRes.status === 'fulfilled' ? followersRes.value : null;
-    const followingRaw = followingRes.status === 'fulfilled' ? followingRes.value : null;
+    const hasFollowersPayload = followersRes.status === 'fulfilled';
+    const hasFollowingPayload = followingRes.status === 'fulfilled';
+    const followersRaw = hasFollowersPayload ? followersRes.value : null;
+    const followingRaw = hasFollowingPayload ? followingRes.value : null;
     const followers_count = parseScraperCount(followersRaw, 'followers');
     const follows_count = parseScraperCount(followingRaw, 'following');
 
-    if (!followers_count && !follows_count) return null;
+    if (!hasFollowersPayload && !hasFollowingPayload) return null;
     return { followers_count, follows_count, _source: 'instagramScraperStable' };
   } catch (error) {
     console.warn(`[API] Instagram Scraper Stable count fallback failed:`, error.message);
@@ -1255,11 +1257,12 @@ async function fetchViaInstagram120(safeUsername) {
   };
 
   // Fallback: hydrate missing follower/following counts from dedicated followers endpoint
-  if (!bd.followers_count || !bd.follows_count) {
+  const shouldAttemptCountRecovery = bd.media_count > 0 && (bd.followers_count === 0 || bd.follows_count === 0);
+  if (shouldAttemptCountRecovery) {
     const fallbackCounts = await tryInstagramScraperStableCounts(safeUsername);
     if (fallbackCounts) {
-      bd.followers_count = bd.followers_count || fallbackCounts.followers_count || 0;
-      bd.follows_count = bd.follows_count || fallbackCounts.follows_count || 0;
+      if (fallbackCounts.followers_count > 0) bd.followers_count = fallbackCounts.followers_count;
+      if (fallbackCounts.follows_count > 0) bd.follows_count = fallbackCounts.follows_count;
       bd._apiSource = `instagram120 + ${fallbackCounts._source}`;
     }
   }
