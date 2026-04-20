@@ -433,6 +433,26 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:cen
 .cmp-loading{text-align:center;padding:40px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text2);display:none}
 .cmp-loading.show{display:block}
 
+/* ── SYSTEM LOG PANEL ── */
+.syslog-btn{position:fixed;bottom:32px;left:32px;z-index:320;background:var(--bg2);border:1px solid var(--border);
+  color:var(--cyan);border-radius:999px;padding:10px 14px;font-family:'DM Mono',monospace;font-size:10px;
+  letter-spacing:1.2px;cursor:pointer;transition:all .2s}
+.syslog-btn:hover{border-color:rgba(76,201,240,0.45);background:rgba(76,201,240,0.08)}
+.syslog-panel{position:fixed;left:32px;bottom:84px;z-index:320;width:min(720px,calc(100vw - 64px));height:min(420px,60vh);
+  display:none;flex-direction:column;background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  box-shadow:0 16px 48px rgba(0,0,0,0.45);overflow:hidden}
+.syslog-panel.open{display:flex}
+.syslog-head{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);
+  background:var(--grad-soft)}
+.syslog-title{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:1.2px;color:var(--text)}
+.syslog-actions{display:flex;align-items:center;gap:8px}
+.syslog-action{background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:8px;padding:5px 8px;
+  font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;transition:all .2s}
+.syslog-action:hover{border-color:rgba(247,37,133,0.4);color:var(--pink)}
+.syslog-body{flex:1;overflow:auto;padding:12px 14px;background:#090713;color:#d8d5e7;
+  font-family:'DM Mono',monospace;font-size:11px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+@media(max-width:700px){.syslog-btn{left:16px;bottom:16px}.syslog-panel{left:16px;bottom:64px;width:calc(100vw - 32px)}}
+
 /* ── SCROLLBAR + FOOTER ── */
 ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:var(--bg)} ::-webkit-scrollbar-thumb{background:var(--muted);border-radius:3px}
 footer{text-align:center;padding:40px 24px;font-size:12px;color:var(--muted);
@@ -755,6 +775,19 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
   </div>
 </div>
 
+<button class="syslog-btn" onclick="openSystemLog()">SYSTEM LOG</button>
+<div class="syslog-panel" id="systemLogPanel">
+  <div class="syslog-head">
+    <div class="syslog-title">RUNTIME SYSTEM LOGS</div>
+    <div class="syslog-actions">
+      <button class="syslog-action" onclick="copySystemLogs()">Copy</button>
+      <button class="syslog-action" onclick="clearSystemLogs()">Clear</button>
+      <button class="syslog-action" onclick="closeSystemLog()">Close</button>
+    </div>
+  </div>
+  <div class="syslog-body" id="systemLogBody">No log entries yet.</div>
+</div>
+
 <footer>GramIQ · Real-Time Instagram Intelligence · Built with <span class="g">♥</span> using Gemini AI · Powered by 3 RapidAPIs</footer>
 
 <script>
@@ -769,6 +802,8 @@ const RAPIDAPI_KEY  = 'd3580be2a0msha1bc8c38eec29d5p145a84jsn35cffc4e70f8';
 
 // Enable debug logging (set to true to see detailed API responses)
 const DEBUG_MODE = true;
+const SYSTEM_LOG_MAX_ENTRIES = 250;
+const systemLogEntries = [];
 
 // Three different Instagram APIs for comprehensive coverage
 const API_CONFIGS = {
@@ -800,8 +835,101 @@ const API_CONFIGS = {
 function debugLog(label, data) {
   if (DEBUG_MODE) {
     console.log(`[DEBUG ${label}]`, data);
+    addSystemLog('DEBUG', label, data);
   }
 }
+
+function safeLogSerialize(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack || '',
+      cause: value.cause || null
+    };
+  }
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function addSystemLog(level, message, details = null) {
+  const entry = {
+    time: new Date().toISOString(),
+    level: String(level || 'INFO').toUpperCase(),
+    message: String(message || ''),
+    details: safeLogSerialize(details)
+  };
+  systemLogEntries.push(entry);
+  if (systemLogEntries.length > SYSTEM_LOG_MAX_ENTRIES) {
+    systemLogEntries.splice(0, systemLogEntries.length - SYSTEM_LOG_MAX_ENTRIES);
+  }
+  renderSystemLogs();
+}
+
+function formatSystemLogEntry(entry) {
+  const details = entry.details == null
+    ? ''
+    : `\n${typeof entry.details === 'string' ? entry.details : JSON.stringify(entry.details, null, 2)}`;
+  return `[${entry.time}] [${entry.level}] ${entry.message}${details}`;
+}
+
+function renderSystemLogs() {
+  const logBody = document.getElementById('systemLogBody');
+  if (!logBody) return;
+  if (!systemLogEntries.length) {
+    logBody.textContent = 'No log entries yet.';
+    return;
+  }
+  logBody.textContent = systemLogEntries.map(formatSystemLogEntry).join('\n\n');
+  logBody.scrollTop = logBody.scrollHeight;
+}
+
+function getSystemLogsText() {
+  return systemLogEntries.map(formatSystemLogEntry).join('\n\n');
+}
+
+function openSystemLog() {
+  const panel = document.getElementById('systemLogPanel');
+  if (panel) panel.classList.add('open');
+}
+function closeSystemLog() {
+  const panel = document.getElementById('systemLogPanel');
+  if (panel) panel.classList.remove('open');
+}
+function clearSystemLogs() {
+  systemLogEntries.length = 0;
+  renderSystemLogs();
+}
+async function copySystemLogs() {
+  const text = getSystemLogsText();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    addSystemLog('INFO', 'System logs copied to clipboard');
+  } catch (error) {
+    addSystemLog('WARN', 'Clipboard copy failed', { message: error?.message || String(error) });
+  }
+}
+
+window.addEventListener('error', (event) => {
+  addSystemLog('ERROR', 'Window runtime error', {
+    message: event.message || '',
+    source: event.filename || '',
+    line: event.lineno || 0,
+    column: event.colno || 0
+  });
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason instanceof Error
+    ? { name: event.reason.name, message: event.reason.message, stack: event.reason.stack || '' }
+    : event.reason;
+  addSystemLog('ERROR', 'Unhandled promise rejection', reason);
+});
 
 // Legacy constant for backward compatibility
 const RAPIDAPI_HOST = API_CONFIGS.instagram120.host;
@@ -886,6 +1014,15 @@ function getGemKey(){return appConfig.geminiKey||''}
    ══════════════════════════════════════ */
 
 // Helper: Call a specific API with proper error handling
+async function readResponsePayload(res) {
+  const rawText = await res.text();
+  try {
+    return rawText ? JSON.parse(rawText) : {};
+  } catch {
+    return { raw: rawText };
+  }
+}
+
 async function callRapidAPI(apiName, endpoint, params = {}) {
   const config = API_CONFIGS[apiName];
   if (!config) throw new Error(`Unknown API: ${apiName}`);
@@ -898,6 +1035,7 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
   };
 
   debugLog(`API Call: ${apiName}`, { url, endpoint, params });
+  addSystemLog('INFO', `Calling ${apiName}`, { endpoint, url, params });
 
   try {
     // Instagram Statistics API uses query params for some endpoints
@@ -909,9 +1047,13 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
         method: 'GET',
         headers
       });
-      const json = await res.json();
+      const json = await readResponsePayload(res);
       debugLog(`Response from ${apiName}`, json);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.details = { apiName, endpoint, status: res.status, url: urlWithParams, response: json };
+        throw err;
+      }
       return json;
     }
 
@@ -924,9 +1066,13 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
         method: 'GET',
         headers
       });
-      const json = await res.json();
+      const json = await readResponsePayload(res);
       debugLog(`Response from ${apiName}`, json);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.details = { apiName, endpoint, status: res.status, url: urlWithParams, response: json };
+        throw err;
+      }
       return json;
     }
 
@@ -937,13 +1083,24 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
       headers,
       body: JSON.stringify(params)
     });
-    const json = await res.json();
+    const json = await readResponsePayload(res);
     debugLog(`Response from ${apiName}`, json);
     
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`);
+      err.details = { apiName, endpoint, status: res.status, url, response: json };
+      throw err;
+    }
     return json;
   } catch (error) {
     debugLog(`Error in ${apiName}`, error);
+    addSystemLog('ERROR', `RapidAPI call failed (${apiName})`, {
+      apiName,
+      endpoint,
+      message: error?.message || String(error),
+      name: error?.name || 'Error',
+      details: error?.details || null
+    });
     throw error;
   }
 }
@@ -988,6 +1145,10 @@ async function tryInstagramStatsAPI(username) {
     };
   } catch (error) {
     console.warn(`[API] Instagram Statistics API failed:`, error.message);
+    addSystemLog('WARN', 'Instagram Statistics API fallback failed', {
+      username,
+      message: error?.message || String(error)
+    });
     return null;
   }
 }
@@ -1037,6 +1198,10 @@ async function tryInstagramLooterAPI(username) {
     };
   } catch (error) {
     console.warn(`[API] Instagram Looter API failed:`, error.message);
+    addSystemLog('WARN', 'Instagram Looter API fallback failed', {
+      username,
+      message: error?.message || String(error)
+    });
     return null;
   }
 }
@@ -1047,6 +1212,7 @@ async function tryInstagramLooterAPI(username) {
 async function fetchInstagramData(targetUsername) {
   const safeUsername = normalizeInstagramUsername(targetUsername);
   console.log(`[API] Fetching data for @${safeUsername} using multi-API strategy`);
+  addSystemLog('INFO', 'Starting multi-API fetch', { username: safeUsername });
 
   let profileData = null;
   let postsData = null;
@@ -1063,6 +1229,7 @@ async function fetchInstagramData(targetUsername) {
   } catch (error) {
     errors.push(`Instagram120: ${error.message}`);
     console.warn(`[API] Instagram120 failed:`, error.message);
+    addSystemLog('WARN', 'Strategy 1 failed (instagram120)', { username: safeUsername, message: error.message });
   }
 
   // STRATEGY 2: Try Instagram Statistics API (fallback for profile data)
@@ -1071,9 +1238,11 @@ async function fetchInstagramData(targetUsername) {
     profileData = await tryInstagramStatsAPI(safeUsername);
     if (profileData) {
       console.log(`[API] ✓ Got profile from Instagram Statistics API`);
+      addSystemLog('INFO', 'Strategy 2 succeeded (instagramStats)', { username: safeUsername });
     }
   } catch (error) {
     errors.push(`InstagramStats: ${error.message}`);
+    addSystemLog('WARN', 'Strategy 2 failed (instagramStats)', { username: safeUsername, message: error.message });
   }
 
   // STRATEGY 3: Try Instagram Looter API (additional fallback)
@@ -1083,9 +1252,11 @@ async function fetchInstagramData(targetUsername) {
       profileData = await tryInstagramLooterAPI(safeUsername);
       if (profileData) {
         console.log(`[API] ✓ Got profile from Instagram Looter API`);
+        addSystemLog('INFO', 'Strategy 3 succeeded (instagramLooter)', { username: safeUsername });
       }
     } catch (error) {
       errors.push(`InstagramLooter: ${error.message}`);
+      addSystemLog('WARN', 'Strategy 3 failed (instagramLooter)', { username: safeUsername, message: error.message });
     }
   }
 
@@ -1112,6 +1283,7 @@ async function fetchInstagramData(targetUsername) {
 
   // All APIs failed
   const errorMsg = `Could not fetch data for @${safeUsername}. All APIs failed:\n${errors.join('\n')}`;
+  addSystemLog('ERROR', 'All API strategies failed', { username: safeUsername, errors });
   throw new Error(errorMsg);
 }
 
@@ -1698,19 +1870,35 @@ async function fetchInstagramFromCandidates(paths, body, label) {
         },
         body: JSON.stringify(body || {})
       });
+      const json = await readResponsePayload(res);
       if (!res.ok) {
         lastEndpointError = `HTTP ${res.status} on ${path}`;
+        addSystemLog('WARN', `Instagram120 endpoint failed (${label})`, {
+          path,
+          status: res.status,
+          response: json
+        });
         continue;
       }
-      const json = await res.json();
       const apiError = getInstagramApiError(json);
       if (apiError) {
         lastEndpointError = `${path}: ${apiError}`;
+        addSystemLog('WARN', `Instagram120 API error (${label})`, {
+          path,
+          apiError,
+          response: json
+        });
         continue;
       }
+      addSystemLog('INFO', `Instagram120 endpoint succeeded (${label})`, { path });
       return json;
     } catch (e) {
       lastEndpointError = `${path}: ${e.message || 'Network error'}`;
+      addSystemLog('ERROR', `Instagram120 network failure (${label})`, {
+        path,
+        message: e?.message || String(e),
+        name: e?.name || 'Error'
+      });
     }
   }
   throw new Error(`Instagram ${label} request failed. ${lastEndpointError || 'No compatible endpoint responded successfully.'}`);
@@ -1796,6 +1984,7 @@ async function startAnalysis(){
   }catch(err){
     hideLoading();
     document.getElementById('hero').style.display='flex';
+    addSystemLog('ERROR', 'Analysis failed', { message: err?.message || String(err) });
     alert('⚠️ '+(err.message||'Analysis failed. Please try again.'));
   }
 }
