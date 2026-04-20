@@ -775,7 +775,7 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
   </div>
 </div>
 
-<button class="syslog-btn" onclick="openSystemLog()">SYSTEM LOG</button>
+<button class="syslog-btn" onclick="openSystemLog()" aria-label="Open system log panel">SYSTEM LOG</button>
 <div class="syslog-panel" id="systemLogPanel">
   <div class="syslog-head">
     <div class="syslog-title">RUNTIME SYSTEM LOGS</div>
@@ -858,6 +858,7 @@ function safeLogSerialize(value) {
 }
 
 function addSystemLog(level, message, details = null) {
+  if (systemLogEntries.length >= SYSTEM_LOG_MAX_ENTRIES) systemLogEntries.shift();
   const entry = {
     time: new Date().toISOString(),
     level: String(level || 'INFO').toUpperCase(),
@@ -865,9 +866,6 @@ function addSystemLog(level, message, details = null) {
     details: safeLogSerialize(details)
   };
   systemLogEntries.push(entry);
-  if (systemLogEntries.length > SYSTEM_LOG_MAX_ENTRIES) {
-    systemLogEntries.splice(0, systemLogEntries.length - SYSTEM_LOG_MAX_ENTRIES);
-  }
   renderSystemLogs();
 }
 
@@ -907,7 +905,10 @@ function clearSystemLogs() {
 }
 async function copySystemLogs() {
   const text = getSystemLogsText();
-  if (!text) return;
+  if (!text) {
+    addSystemLog('INFO', 'No logs available to copy');
+    return;
+  }
   try {
     await navigator.clipboard.writeText(text);
     addSystemLog('INFO', 'System logs copied to clipboard');
@@ -1050,7 +1051,7 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
       const json = await readResponsePayload(res);
       debugLog(`Response from ${apiName}`, json);
       if (!res.ok) {
-        const err = new Error(`HTTP ${res.status}`);
+        const err = new Error(`HTTP ${res.status} for ${apiName}${endpoint}`);
         err.details = { apiName, endpoint, status: res.status, url: urlWithParams, response: json };
         throw err;
       }
@@ -1069,7 +1070,7 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
       const json = await readResponsePayload(res);
       debugLog(`Response from ${apiName}`, json);
       if (!res.ok) {
-        const err = new Error(`HTTP ${res.status}`);
+        const err = new Error(`HTTP ${res.status} for ${apiName}${endpoint}`);
         err.details = { apiName, endpoint, status: res.status, url: urlWithParams, response: json };
         throw err;
       }
@@ -1087,7 +1088,7 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
     debugLog(`Response from ${apiName}`, json);
     
     if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}`);
+      const err = new Error(`HTTP ${res.status} for ${apiName}${endpoint}`);
       err.details = { apiName, endpoint, status: res.status, url, response: json };
       throw err;
     }
