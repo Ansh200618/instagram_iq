@@ -780,9 +780,9 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
   <div class="syslog-head">
     <div class="syslog-title">RUNTIME SYSTEM LOGS</div>
     <div class="syslog-actions">
-      <button class="syslog-action" onclick="copySystemLogs()">Copy</button>
-      <button class="syslog-action" onclick="clearSystemLogs()">Clear</button>
-      <button class="syslog-action" onclick="closeSystemLog()">Close</button>
+      <button class="syslog-action" onclick="copySystemLogs()" aria-label="Copy system logs to clipboard">Copy</button>
+      <button class="syslog-action" onclick="clearSystemLogs()" aria-label="Clear all system logs">Clear</button>
+      <button class="syslog-action" onclick="closeSystemLog()" aria-label="Close system log panel">Close</button>
     </div>
   </div>
   <div class="syslog-body" id="systemLogBody">No log entries yet.</div>
@@ -922,7 +922,10 @@ window.addEventListener('error', (event) => {
     message: event.message || '',
     source: event.filename || '',
     line: event.lineno || 0,
-    column: event.colno || 0
+    column: event.colno || 0,
+    error: event.error instanceof Error
+      ? { name: event.error.name, message: event.error.message, stack: event.error.stack || '' }
+      : event.error || null
   });
 });
 window.addEventListener('unhandledrejection', (event) => {
