@@ -1018,12 +1018,23 @@ function getGemKey(){return appConfig.geminiKey||''}
    ══════════════════════════════════════ */
 
 // Helper: Call a specific API with proper error handling
+function summarizePayload(payload) {
+  if (payload == null) return '';
+  const text = typeof payload === 'string' ? payload : (() => {
+    try { return JSON.stringify(payload); } catch { return String(payload); }
+  })();
+  return text.length > 600 ? `${text.slice(0, 600)}…[truncated]` : text;
+}
+
 async function readResponsePayload(res) {
   const rawText = await res.text();
   try {
-    return rawText ? JSON.parse(rawText) : {};
-  } catch {
-    return { raw: rawText };
+    return { payload: (rawText ? JSON.parse(rawText) : {}), parseError: '' };
+  } catch (error) {
+    return {
+      payload: { raw: rawText ? `${rawText.slice(0, 600)}${rawText.length > 600 ? '…[truncated]' : ''}` : '' },
+      parseError: error?.message || 'Invalid JSON response'
+    };
   }
 }
 
@@ -1051,11 +1062,16 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
         method: 'GET',
         headers
       });
-      const json = await readResponsePayload(res);
+      const { payload: json, parseError } = await readResponsePayload(res);
       debugLog(`Response from ${apiName}`, json);
+      if (parseError && res.ok) {
+        const err = new Error(`Invalid JSON response for ${apiName}${endpoint}`);
+        err.details = { apiName, endpoint, parseError, url: urlWithParams, responsePreview: summarizePayload(json) };
+        throw err;
+      }
       if (!res.ok) {
         const err = new Error(`HTTP ${res.status} for ${apiName}${endpoint}`);
-        err.details = { apiName, endpoint, status: res.status, url: urlWithParams, response: json };
+        err.details = { apiName, endpoint, status: res.status, url: urlWithParams, responsePreview: summarizePayload(json) };
         throw err;
       }
       return json;
@@ -1070,11 +1086,16 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
         method: 'GET',
         headers
       });
-      const json = await readResponsePayload(res);
+      const { payload: json, parseError } = await readResponsePayload(res);
       debugLog(`Response from ${apiName}`, json);
+      if (parseError && res.ok) {
+        const err = new Error(`Invalid JSON response for ${apiName}${endpoint}`);
+        err.details = { apiName, endpoint, parseError, url: urlWithParams, responsePreview: summarizePayload(json) };
+        throw err;
+      }
       if (!res.ok) {
         const err = new Error(`HTTP ${res.status} for ${apiName}${endpoint}`);
-        err.details = { apiName, endpoint, status: res.status, url: urlWithParams, response: json };
+        err.details = { apiName, endpoint, status: res.status, url: urlWithParams, responsePreview: summarizePayload(json) };
         throw err;
       }
       return json;
@@ -1087,12 +1108,17 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
       headers,
       body: JSON.stringify(params)
     });
-    const json = await readResponsePayload(res);
+    const { payload: json, parseError } = await readResponsePayload(res);
     debugLog(`Response from ${apiName}`, json);
+    if (parseError && res.ok) {
+      const err = new Error(`Invalid JSON response for ${apiName}${endpoint}`);
+      err.details = { apiName, endpoint, parseError, url, responsePreview: summarizePayload(json) };
+      throw err;
+    }
     
     if (!res.ok) {
       const err = new Error(`HTTP ${res.status} for ${apiName}${endpoint}`);
-      err.details = { apiName, endpoint, status: res.status, url, response: json };
+      err.details = { apiName, endpoint, status: res.status, url, responsePreview: summarizePayload(json) };
       throw err;
     }
     return json;
@@ -1874,13 +1900,22 @@ async function fetchInstagramFromCandidates(paths, body, label) {
         },
         body: JSON.stringify(body || {})
       });
-      const json = await readResponsePayload(res);
+      const { payload: json, parseError } = await readResponsePayload(res);
+      if (parseError && res.ok) {
+        lastEndpointError = `${path}: Invalid JSON response (${parseError})`;
+        addSystemLog('WARN', `Instagram120 parse failure (${label})`, {
+          path,
+          parseError,
+          responsePreview: summarizePayload(json)
+        });
+        continue;
+      }
       if (!res.ok) {
         lastEndpointError = `HTTP ${res.status} on ${path}`;
         addSystemLog('WARN', `Instagram120 endpoint failed (${label})`, {
           path,
           status: res.status,
-          response: json
+          responsePreview: summarizePayload(json)
         });
         continue;
       }
@@ -1890,7 +1925,7 @@ async function fetchInstagramFromCandidates(paths, body, label) {
         addSystemLog('WARN', `Instagram120 API error (${label})`, {
           path,
           apiError,
-          response: json
+          responsePreview: summarizePayload(json)
         });
         continue;
       }
