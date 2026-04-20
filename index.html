@@ -767,6 +767,9 @@ footer .g{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-
 // Your single RapidAPI key works across all three services
 const RAPIDAPI_KEY  = 'd3580be2a0msha1bc8c38eec29d5p145a84jsn35cffc4e70f8';
 
+// Enable debug logging (set to true to see detailed API responses)
+const DEBUG_MODE = true;
+
 // Three different Instagram APIs for comprehensive coverage
 const API_CONFIGS = {
   instagram120: {
@@ -792,6 +795,13 @@ const API_CONFIGS = {
     }
   }
 };
+
+// Debug logger
+function debugLog(label, data) {
+  if (DEBUG_MODE) {
+    console.log(`[DEBUG ${label}]`, data);
+  }
+}
 
 // Legacy constant for backward compatibility
 const RAPIDAPI_HOST = API_CONFIGS.instagram120.host;
@@ -871,6 +881,8 @@ function getGemKey(){return appConfig.geminiKey||''}
    1. Instagram120 (primary)
    2. Instagram Statistics API (fallback)
    3. Instagram Looter (search/discovery)
+   
+   🔍 DEBUG MODE ENABLED - Check browser console for detailed API responses
    ══════════════════════════════════════ */
 
 // Helper: Call a specific API with proper error handling
@@ -885,39 +897,55 @@ async function callRapidAPI(apiName, endpoint, params = {}) {
     'x-rapidapi-key': RAPIDAPI_KEY
   };
 
-  // Instagram Statistics API uses query params for some endpoints
-  if (apiName === 'instagramStats' && endpoint.includes('/profile')) {
-    const username = params.username || params.url;
-    const urlWithParams = `${url}?url=${encodeURIComponent(username)}`;
-    const res = await fetch(urlWithParams, {
-      method: 'GET',
-      headers
+  debugLog(`API Call: ${apiName}`, { url, endpoint, params });
+
+  try {
+    // Instagram Statistics API uses query params for some endpoints
+    if (apiName === 'instagramStats' && endpoint.includes('/profile')) {
+      const username = params.username || params.url;
+      const urlWithParams = `${url}?url=${encodeURIComponent(username)}`;
+      debugLog('Fetching', urlWithParams);
+      const res = await fetch(urlWithParams, {
+        method: 'GET',
+        headers
+      });
+      const json = await res.json();
+      debugLog(`Response from ${apiName}`, json);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return json;
+    }
+
+    // Instagram Looter uses GET for search
+    if (apiName === 'instagramLooter' && endpoint.includes('/search')) {
+      const query = params.query || params.username;
+      const urlWithParams = `${url}?query=${encodeURIComponent(query)}`;
+      debugLog('Fetching', urlWithParams);
+      const res = await fetch(urlWithParams, {
+        method: 'GET',
+        headers
+      });
+      const json = await res.json();
+      debugLog(`Response from ${apiName}`, json);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return json;
+    }
+
+    // Default: POST with JSON body (Instagram120)
+    debugLog('Fetching POST', { url, body: params });
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(params)
     });
+    const json = await res.json();
+    debugLog(`Response from ${apiName}`, json);
+    
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    return json;
+  } catch (error) {
+    debugLog(`Error in ${apiName}`, error);
+    throw error;
   }
-
-  // Instagram Looter uses GET for search
-  if (apiName === 'instagramLooter' && endpoint.includes('/search')) {
-    const query = params.query || params.username;
-    const urlWithParams = `${url}?query=${encodeURIComponent(query)}`;
-    const res = await fetch(urlWithParams, {
-      method: 'GET',
-      headers
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  }
-
-  // Default: POST with JSON body (Instagram120)
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(params)
-  });
-
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
 }
 
 // Try to fetch profile from Instagram Statistics API
@@ -926,9 +954,25 @@ async function tryInstagramStatsAPI(username) {
     console.log(`[API] Trying Instagram Statistics API for @${username}`);
     const data = await callRapidAPI('instagramStats', '/profile', { url: username });
     
+    debugLog('Instagram Stats API Raw Response', data);
+    
     // Extract profile data (this API returns different structure)
     const profile = data?.data || data;
     if (!profile || !profile.username) return null;
+
+    // Comprehensive profile picture extraction
+    const profile_pic = 
+      profile.profile_pic_url || 
+      profile.profile_picture_url || 
+      profile.profile_pic ||
+      profile.profilePicUrl ||
+      profile.avatar ||
+      profile.avatar_url ||
+      profile.picture ||
+      profile.hd_profile_pic_url ||
+      '';
+
+    debugLog('Stats API Profile Picture', profile_pic);
 
     return {
       username: profile.username || username,
@@ -936,7 +980,7 @@ async function tryInstagramStatsAPI(username) {
       followers_count: parseCountValue(profile.follower_count || profile.followers || profile.followers_count || profile.followerCount),
       follows_count: parseCountValue(profile.following_count || profile.following || profile.follows_count || profile.followingCount),
       media_count: parseCountValue(profile.media_count || profile.posts_count || profile.mediaCount || profile.post_count),
-      profile_picture_url: parseUrlValue(profile.profile_pic_url || profile.profile_picture_url || profile.profile_pic),
+      profile_picture_url: profile_pic,
       biography: profile.biography || profile.bio || '',
       is_verified: profile.is_verified || false,
       is_private: profile.is_private || false,
@@ -954,6 +998,8 @@ async function tryInstagramLooterAPI(username) {
     console.log(`[API] Trying Instagram Looter API for @${username}`);
     const data = await callRapidAPI('instagramLooter', '/search', { query: username });
     
+    debugLog('Instagram Looter API Raw Response', data);
+    
     // This API returns search results - find exact match
     const results = data?.results || data?.data || [];
     const exactMatch = results.find(r => 
@@ -962,13 +1008,28 @@ async function tryInstagramLooterAPI(username) {
 
     if (!exactMatch) return null;
 
+    // Comprehensive profile picture extraction
+    const profile_pic = 
+      exactMatch.profile_pic_url || 
+      exactMatch.profile_picture_url || 
+      exactMatch.profile_picture ||
+      exactMatch.profile_pic ||
+      exactMatch.profilePicUrl ||
+      exactMatch.avatar ||
+      exactMatch.avatar_url ||
+      exactMatch.picture ||
+      exactMatch.hd_profile_pic_url ||
+      '';
+
+    debugLog('Looter API Profile Picture', profile_pic);
+
     return {
       username: exactMatch.username || username,
       name: exactMatch.full_name || exactMatch.name || username,
       followers_count: parseCountValue(exactMatch.follower_count || exactMatch.followers || exactMatch.followers_count || exactMatch.followerCount),
       follows_count: parseCountValue(exactMatch.following_count || exactMatch.following || exactMatch.follows_count || exactMatch.followingCount),
       media_count: parseCountValue(exactMatch.media_count || exactMatch.posts || exactMatch.posts_count || exactMatch.mediaCount),
-      profile_picture_url: parseUrlValue(exactMatch.profile_pic_url || exactMatch.profile_picture),
+      profile_picture_url: profile_pic,
       biography: exactMatch.biography || exactMatch.bio || '',
       is_verified: exactMatch.is_verified || false,
       is_private: exactMatch.is_private || false,
@@ -1150,11 +1211,25 @@ async function fetchViaInstagram120(safeUsername) {
   }
 
   // Build a unified profile object from however the API returns it
+  // COMPREHENSIVE profile picture extraction - check ALL possible fields
   const profilePictureUrl =
     parseUrlValue(userRaw.profile_pic_url) ||
     parseUrlValue(userRaw.profile_picture_url) ||
     parseUrlValue(userRaw.hd_profile_pic_url_info) ||
+    parseUrlValue(userRaw.hd_profile_pic_url) ||
+    parseUrlValue(userRaw.profile_pic) ||
+    parseUrlValue(userRaw.profilePicUrl) ||
+    parseUrlValue(userRaw.profilePictureUrl) ||
+    parseUrlValue(userRaw.avatar) ||
+    parseUrlValue(userRaw.avatar_url) ||
+    parseUrlValue(userRaw.picture) ||
+    parseUrlValue(userRaw.picture_url) ||
+    parseUrlValue(userRaw.image_url) ||
+    parseUrlValue(userRaw.photo_url) ||
     '';
+  
+  debugLog('Profile Picture URL Found', profilePictureUrl);
+
   const bd = {
     username:            userRaw.username || safeUsername,
     name:                userRaw.full_name || userRaw.name || userRaw.username || safeUsername,
@@ -1517,7 +1592,11 @@ function extractProfileStats(...sources) {
     if (src?.user_info && typeof src.user_info === 'object') candidates.push(src.user_info);
     if (src?.account && typeof src.account === 'object') candidates.push(src.account);
     if (src?.profile && typeof src.profile === 'object') candidates.push(src.profile);
+    if (src?.user && typeof src.user === 'object') candidates.push(src.user);
+    if (src?.result && typeof src.result === 'object') candidates.push(src.result);
   });
+
+  debugLog('Profile Extraction Candidates', candidates);
 
   const pick = (...keys) => {
     for (const c of candidates) {
@@ -1529,14 +1608,21 @@ function extractProfileStats(...sources) {
     }
     return 0;
   };
+  
   const pickString = (...keys) => {
     for (const c of candidates) {
       for (const k of keys) {
         const v = c?.[k];
-        if (typeof v === 'string' && v.trim()) return v.trim();
+        if (typeof v === 'string' && v.trim()) {
+          debugLog(`Found string for keys ${keys}`, v);
+          return v.trim();
+        }
         if (v && typeof v === 'object') {
-          const nestedUrl = v?.url || v?.src || v?.uri;
-          if (typeof nestedUrl === 'string' && nestedUrl.trim()) return nestedUrl.trim();
+          const nestedUrl = v?.url || v?.src || v?.uri || v?.href;
+          if (typeof nestedUrl === 'string' && nestedUrl.trim()) {
+            debugLog(`Found nested URL for keys ${keys}`, nestedUrl);
+            return nestedUrl.trim();
+          }
         }
       }
     }
@@ -1545,18 +1631,50 @@ function extractProfileStats(...sources) {
 
   const followers_count = pick(
     'follower_count', 'followers_count', 'followers', 'subscriber_count',
-    'followerCount', 'followersCount', 'edge_followed_by_count', 'edge_followed_by'
+    'followerCount', 'followersCount', 'edge_followed_by_count', 'edge_followed_by',
+    'followed_by_count', 'followedByCount'
   );
   const follows_count = pick(
     'following_count', 'follows_count', 'following', 'follow_count',
-    'followingCount', 'followsCount', 'edge_follow_count', 'edge_follow'
+    'followingCount', 'followsCount', 'edge_follow_count', 'edge_follow',
+    'followCount'
   );
   const media_count = pick(
-    'media_count', 'posts_count', 'post_count', 'total_posts', 'total_media', 'mediaCount', 'postCount'
+    'media_count', 'posts_count', 'post_count', 'total_posts', 'total_media', 
+    'mediaCount', 'postCount', 'postsCount', 'edge_owner_to_timeline_media_count'
   );
+  
+  // MASSIVELY EXPANDED profile picture extraction - check EVERY possible field name
   const profile_picture_url = pickString(
-    'profile_pic_url', 'profile_picture_url', 'avatar', 'avatar_url', 'profilePicUrl', 'hd_profile_pic_url_info'
+    // Standard fields
+    'profile_pic_url', 'profile_picture_url', 'profile_pic', 'profile_picture',
+    // Camel case variants
+    'profilePicUrl', 'profilePictureUrl', 'profilePic', 'profilePicture',
+    // HD/High quality variants
+    'hd_profile_pic_url', 'hd_profile_pic_url_info', 'hd_profile_pic',
+    'hdProfilePicUrl', 'hdProfilePicture',
+    // Avatar variants
+    'avatar', 'avatar_url', 'avatarUrl', 'avatar_uri', 'avatarUri',
+    // Picture variants
+    'picture', 'picture_url', 'pictureUrl', 'pic_url', 'picUrl',
+    // Image variants
+    'image', 'image_url', 'imageUrl', 'img_url', 'imgUrl',
+    // Photo variants
+    'photo', 'photo_url', 'photoUrl',
+    // Thumbnail variants
+    'thumbnail', 'thumbnail_url', 'thumbnailUrl', 'thumb_url', 'thumbUrl',
+    // Edge/graph variants
+    'profile_pic_url_hd', 'edge_profile_pic_url',
+    // Other possible variants
+    'pic', 'pfp', 'pfp_url', 'pfpUrl'
   );
+
+  debugLog('Extracted Profile Stats', {
+    followers_count,
+    follows_count,
+    media_count,
+    profile_picture_url
+  });
 
   return {
     followers_count,
